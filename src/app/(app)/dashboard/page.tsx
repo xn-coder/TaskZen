@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState, useMemo } from 'react';
@@ -6,7 +5,7 @@ import type { Task } from '@/lib/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { getDashboardTasks } from '@/lib/taskService'; // Use taskService
 import { TaskCard } from '@/components/tasks/TaskCard';
-import { Loader2, ListChecks, UserPlus, AlertOctagon, CheckSquare } from 'lucide-react';
+import { Loader2, ListChecks, UserPlus, AlertOctagon, CheckSquare, AlertTriangle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
@@ -14,12 +13,7 @@ import Link from 'next/link';
 import { useToast } from "@/hooks/use-toast";
 
 
-// Dummy functions for edit/delete for now, as dashboard is read-only focus
-// Actual edit/delete will be handled on the full /tasks page or specific task edit page.
 const handleEditTaskRedirect = (task: Task, router: ReturnType<typeof useRouter>) => {
-  // For now, let's assume edit will be handled on a dedicated page or modal opened from /tasks
-  // This is a placeholder.
-  // router.push(`/tasks/edit/${task.id}`); // Example redirect
   const { toast } = useToast();
   toast({ title: "Edit Action", description: `To edit '${task.title}', please go to the All Tasks page.`});
 };
@@ -32,15 +26,39 @@ export default function DashboardPage() {
     createdTasks: [],
     overdueTasks: [],
   });
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true); // Combined loading state for the page
   const router = useRouter();
   const { toast } = useToast();
 
 
   useEffect(() => {
-    if (!authLoading && user && user.profile) { // Ensure user and profile are loaded
-      setIsLoading(true);
-      getDashboardTasks(user.id) // Pass user.id (Supabase auth user ID)
+    // Scenario 1: Auth is still loading.
+    if (authLoading) {
+      setIsLoading(true); // General page loading is true
+      return;
+    }
+
+    // Scenario 2: Auth is done, but no user. Redirect.
+    if (!user) {
+      router.replace('/login');
+      setIsLoading(false); // Stop general page loading as we are redirecting
+      return;
+    }
+
+    // Scenario 3: Auth is done, user exists, but profile is not yet loaded/available.
+    if (user && !user.profile) {
+      // console.log("Dashboard: User loaded, waiting for profile...");
+      setIsLoading(true); // Keep page loading, as profile is essential for dashboard content/logic
+      // Potentially add a timeout here or a listener for profile update if it's highly async
+      // For now, relying on `user` object update from AuthContext to re-trigger this effect.
+      return;
+    }
+
+    // Scenario 4: Auth is done, user exists, profile exists. Fetch tasks.
+    if (user && user.profile) {
+      // console.log("Dashboard: User and profile loaded, fetching tasks for user:", user.id);
+      setIsLoading(true); // Set loading true specifically for task fetching operation
+      getDashboardTasks(user.id)
         .then(data => {
           setDashboardTasks(data);
         })
@@ -49,22 +67,18 @@ export default function DashboardPage() {
           toast({ title: "Error", description: "Could not load dashboard tasks.", variant: "destructive" });
         })
         .finally(() => {
-          setIsLoading(false);
+          setIsLoading(false); // Task fetching attempt (success or fail) is complete
         });
-    } else if (!authLoading && !user) {
-      router.replace('/login'); 
     }
   }, [user, authLoading, router, toast]);
 
 
-  // handleDeleteTask is not a primary feature of the dashboard view.
-  // It will be available on the /tasks page.
   const handleDeleteTaskPlaceholder = (taskId: string) => {
      toast({ title: "Delete Action", description: `To delete tasks, please go to the All Tasks page.`});
   };
 
 
-  if (isLoading || authLoading) {
+  if (isLoading) { // Covers authLoading, profile pending, and task fetching
     return (
       <div className="flex h-full items-center justify-center">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -72,8 +86,22 @@ export default function DashboardPage() {
     );
   }
 
-  if (!user || !user.profile) { // Redirect if no user/profile after loading
-    return null; 
+  // This state implies authLoading is false, isLoading (for tasks/profile) is false,
+  // but user or user.profile is still not available. This is an unexpected state
+  // if useEffect correctly handles redirects and profile loading.
+  if (!user || !user.profile) {
+    return (
+       <div className="flex h-full flex-col items-center justify-center text-center p-6">
+        <AlertTriangle className="h-16 w-16 text-destructive mb-4" />
+        <h2 className="text-xl font-semibold text-foreground mb-2">Could Not Load User Data</h2>
+        <p className="text-muted-foreground mb-6">
+          There was an issue retrieving your profile information. Please try logging in again.
+        </p>
+        <Button onClick={() => router.push('/login')} variant="outline">
+          Go to Login
+        </Button>
+      </div>
+    );
   }
 
   const renderTaskSection = (title: string, tasksToDisplay: Task[], IconComponent: React.ElementType, emptyMessage: string, EmptyIconComponent?: React.ElementType, viewAllLink?: string) => (
@@ -93,12 +121,12 @@ export default function DashboardPage() {
       </div>
       {tasksToDisplay.length > 0 ? (
         <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {tasksToDisplay.slice(0,4).map(task => ( 
-            <TaskCard 
-              key={task.id} 
-              task={task} 
-              onEdit={(t) => handleEditTaskRedirect(t, router)} 
-              onDelete={handleDeleteTaskPlaceholder} 
+          {tasksToDisplay.slice(0,4).map(task => (
+            <TaskCard
+              key={task.id}
+              task={task}
+              onEdit={(t) => handleEditTaskRedirect(t, router)}
+              onDelete={handleDeleteTaskPlaceholder}
             />
           ))}
         </div>

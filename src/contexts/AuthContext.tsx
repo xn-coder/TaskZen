@@ -1,12 +1,11 @@
-
 "use client";
 
 import type { AppUser } from '@/lib/auth'; // Updated User type
 import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
-import { 
-  getCurrentUser as apiGetCurrentUser, 
-  login as apiLogin, 
-  register as apiRegister, 
+import {
+  getCurrentUser as apiGetCurrentUser,
+  login as apiLogin,
+  register as apiRegister,
   logout as apiLogout,
   onAuthStateChange // Import Supabase auth state listener
 } from '@/lib/auth';
@@ -26,27 +25,57 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<AppUser | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false); // For login/register/logout actions
+  const [isInitialLoading, setIsInitialLoading] = useState(true); // For the very first auth check
   const router = useRouter();
 
   useEffect(() => {
-    // Check initial user session
-    apiGetCurrentUser().then(currentUser => {
-      setUser(currentUser);
-      setIsInitialLoading(false);
+    let didUnsubscribe = false;
+
+    // Perform the initial check for an existing session
+    setIsInitialLoading(true);
+    apiGetCurrentUser()
+      .then(currentUser => {
+        if (!didUnsubscribe) {
+          setUser(currentUser);
+        }
+      })
+      .catch(error => {
+        console.error("AuthContext: Error on initial getCurrentUser", error);
+        if (!didUnsubscribe) {
+          setUser(null);
+        }
+      })
+      .finally(() => {
+        if (!didUnsubscribe) {
+          setIsInitialLoading(false);
+        }
+      });
+
+    // Subscribe to subsequent auth state changes (login, logout)
+    const unsubscribeAuthState = onAuthStateChange((appUser) => {
+      if (!didUnsubscribe) {
+        // console.log("AuthContext: Auth state changed, new AppUser:", appUser);
+        setUser(appUser);
+        // If an auth event occurs (login/logout), it means the initial loading phase is effectively over,
+        // or this is an update. Ensure isInitialLoading is false.
+        if (isInitialLoading) {
+            setIsInitialLoading(false);
+        }
+      }
     });
 
-    // Subscribe to auth state changes
-    const unsubscribe = onAuthStateChange(setUser);
-    return () => unsubscribe(); // Cleanup subscription on unmount
-  }, []);
+    return () => {
+      didUnsubscribe = true;
+      unsubscribeAuthState();
+    };
+  }, []); // Empty dependency array: runs once on mount and cleans up on unmount
 
   const handleLogin = useCallback(async (email: string, pass: string) => {
     setIsLoading(true);
     try {
       const loggedInUser = await apiLogin(email, pass);
-      // setUser is handled by onAuthStateChange
+      // setUser(loggedInUser) is handled by onAuthStateChange
       router.push('/dashboard');
       return loggedInUser;
     } catch (error) {
@@ -61,8 +90,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setIsLoading(true);
     try {
       const registeredUser = await apiRegister(name, email, pass);
-      // setUser is handled by onAuthStateChange
-      router.push('/dashboard'); // Or to a verification page if email verification is enabled
+      // setUser(registeredUser) is handled by onAuthStateChange
+      router.push('/dashboard');
       return registeredUser;
     } catch (error) {
       console.error("Registration failed:", error);
@@ -76,11 +105,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setIsLoading(true);
     try {
       await apiLogout();
-      // setUser is handled by onAuthStateChange
+      // setUser(null) is handled by onAuthStateChange
       router.push('/login');
     } catch (error) {
       console.error("Logout failed:", error);
-      throw error; // Rethrow to allow UI to handle it
+      throw error;
     } finally {
       setIsLoading(false);
     }
@@ -120,17 +149,15 @@ export const ProtectedRoute = ({ children }: { children: ReactNode }) => {
     );
   }
 
-  // If trying to access auth pages while logged in, redirect to dashboard
   if (!isInitialLoading && user && (pathname === '/login' || pathname === '/register')) {
     router.replace('/dashboard');
-    return ( // Render loader while redirecting
+    return (
        <div className="flex h-screen w-screen items-center justify-center">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
       </div>
     );
   }
-  
-  // If not loading and not user, and not on auth pages, this implies redirect is pending or children shouldn't render
+
   if (!isInitialLoading && !user && pathname !== '/login' && pathname !== '/register') {
     return (
       <div className="flex h-screen w-screen items-center justify-center">
@@ -138,6 +165,6 @@ export const ProtectedRoute = ({ children }: { children: ReactNode }) => {
       </div>
     );
   }
-  
+
   return <>{children}</>;
 };
