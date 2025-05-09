@@ -21,13 +21,14 @@ import { Calendar } from "@/components/ui/calendar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Task, User } from "@/lib/types";
 import { TASK_EDITABLE_STATUSES, TASK_PRIORITIES } from "@/lib/constants";
-import { mockUsers } from "@/lib/store"; // For assignee dropdown
+import { mockUsers, mockTasks } from "@/lib/store"; // For assignee dropdown // Import mockTasks
 import { cn } from "@/lib/utils";
 import { CalendarIcon, Loader2 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
+import { useState } from "react"; // Import useState
 
 const taskFormSchema = z.object({
   title: z.string().min(3, "Title must be at least 3 characters."),
@@ -119,6 +120,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
         onSubmitSuccess(resultTask);
       } else {
         router.push('/tasks'); // Default redirect
+        router.refresh(); // Refresh to show new/updated task if store is updated
       }
     } catch (error) {
       console.error("Failed to save task:", error);
@@ -251,7 +253,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Assign To (Optional)</FormLabel>
-                <Select onValueChange={field.onChange} defaultValue={field.value}>
+                <Select onValueChange={(value) => field.onChange(value === "unassigned" ? undefined : value)} defaultValue={field.value}>
                   <FormControl>
                     <SelectTrigger>
                       <SelectValue placeholder="Select assignee" />
