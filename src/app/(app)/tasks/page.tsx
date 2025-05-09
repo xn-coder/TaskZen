@@ -8,7 +8,7 @@ import { mockTasks as allMockTasks, getTasksWithResolvedStatus, deleteTask as ap
 import { TaskCard } from '@/components/tasks/TaskCard';
 import { TaskFilter } from '@/components/tasks/TaskFilter';
 import { TaskSearch } from '@/components/tasks/TaskSearch';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Loader2, PlusCircle, AlertTriangle } from 'lucide-react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
@@ -183,3 +183,4 @@ export default function TasksPage() {
 
 // Helper hook for state persistence in URL (optional, can be complex)
 // For now, local state for filters is fine.
+
