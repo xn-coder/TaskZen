@@ -25,11 +25,24 @@ export function AppSidebarNav({ items, isCollapsed = false, isMobile = false }: 
     return null;
   }
 
+  let mostSpecificActiveHref = "";
+  if (pathname) {
+    for (const navItem of items) {
+      // Ensure navItem.href is not null or undefined before calling startsWith
+      if (navItem.href && pathname.startsWith(navItem.href)) {
+        if (navItem.href.length > mostSpecificActiveHref.length) {
+          mostSpecificActiveHref = navItem.href;
+        }
+      }
+    }
+  }
+
   return (
     <nav className={cn("grid gap-1 px-2", isMobile && "mt-2")}>
       {items.map((item, index) => {
         const Icon = item.icon;
-        const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
+        // An item is active if its href is the most specific (longest) prefix match.
+        const isActive = item.href === mostSpecificActiveHref;
 
         if (isCollapsed && !isMobile) {
           return (
@@ -92,3 +105,4 @@ export function AppSidebarNav({ items, isCollapsed = false, isMobile = false }: 
     </nav>
   );
 }
+
