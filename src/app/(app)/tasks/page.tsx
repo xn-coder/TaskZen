@@ -1,0 +1,185 @@
+
+"use client";
+
+import { useEffect, useState, useMemo, useCallback } from 'react';
+import type { Task, TaskPriority, TaskStatus } from '@/lib/types';
+import { useAuth } from '@/contexts/AuthContext';
+import { mockTasks as allMockTasks, getTasksWithResolvedStatus, deleteTask as apiDeleteTask } from '@/lib/store';
+import { TaskCard } from '@/components/tasks/TaskCard';
+import { TaskFilter } from '@/components/tasks/TaskFilter';
+import { TaskSearch } from '@/components/tasks/TaskSearch';
+import { Button } from '@/components/ui/button';
+import { Loader2, PlusCircle, AlertTriangle } from 'lucide-react';
+import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import { useToast } from "@/hooks/use-toast";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+
+export default function TasksPage() {
+  const { user, isInitialLoading: authLoading } = useAuth();
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const searchParams = useSearchParams();
+  const { toast } = useToast();
+  const [taskToDelete, setTaskToDelete] = useState<string | null>(null);
+
+  // Filters state
+  const [filters, setFilters] = useState<{ status: TaskStatus[]; priority: TaskPriority[] }>({
+    status: [],
+    priority: [],
+  });
+
+  useEffect(() => {
+    if (!authLoading) {
+      setIsLoading(true);
+      // Simulate API call
+      setTimeout(() => {
+        const processedTasks = getTasksWithResolvedStatus(allMockTasks);
+        setTasks(processedTasks);
+        setIsLoading(false);
+      }, 300);
+    }
+  }, [user, authLoading]);
+
+  const query = searchParams.get("query") || "";
+
+  const filteredTasks = useMemo(() => {
+    return tasks
+      .filter(task => 
+        (task.title.toLowerCase().includes(query.toLowerCase()) || 
+         task.description.toLowerCase().includes(query.toLowerCase()))
+      )
+      .filter(task => 
+        filters.status.length === 0 || filters.status.includes(task.status)
+      )
+      .filter(task =>
+        filters.priority.length === 0 || filters.priority.includes(task.priority)
+      );
+  }, [tasks, query, filters]);
+
+  const handleFilterChange = useCallback((filterType: "status" | "priority", value: string) => {
+    setFilters(prevFilters => {
+      const currentFilterValues = prevFilters[filterType] as string[];
+      const newFilterValues = currentFilterValues.includes(value)
+        ? currentFilterValues.filter(v => v !== value)
+        : [...currentFilterValues, value];
+      return { ...prevFilters, [filterType]: newFilterValues };
+    });
+  }, []);
+
+  const clearFilters = useCallback(() => {
+    setFilters({ status: [], priority: [] });
+  }, []);
+
+  const handleEditTask = (task: Task) => {
+    // Placeholder for edit functionality routing or modal
+    // router.push(`/tasks/${task.id}/edit`);
+    toast({ title: "Edit Clicked", description: `Editing task: ${task.title}`});
+  };
+
+  const confirmDeleteTask = async () => {
+    if (!taskToDelete) return;
+    try {
+      // await apiDeleteTask(taskToDelete); // In real app
+      // For mock:
+      const taskTitle = tasks.find(t => t.id === taskToDelete)?.title || "Task";
+      setTasks(prevTasks => prevTasks.filter(t => t.id !== taskToDelete));
+      toast({ title: "Task Deleted", description: `"${taskTitle}" has been deleted.` });
+    } catch (error) {
+      toast({ title: "Error Deleting Task", description: "Could not delete task.", variant: "destructive" });
+    } finally {
+      setTaskToDelete(null);
+    }
+  };
+
+  if (isLoading || authLoading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="container mx-auto py-2">
+      <div className="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <h1 className="text-3xl font-bold text-foreground">All Tasks</h1>
+        <Button asChild>
+          <Link href="/tasks/create">
+            <PlusCircle className="mr-2 h-5 w-5" /> Create New Task
+          </Link>
+        </Button>
+      </div>
+
+      <div className="mb-6 flex flex-col md:flex-row md:items-center gap-4 p-4 bg-card rounded-lg shadow">
+        <div className="flex-grow">
+          <TaskSearch />
+        </div>
+        <TaskFilter 
+          appliedFilters={filters}
+          onFilterChange={handleFilterChange}
+          onClearFilters={clearFilters}
+        />
+      </div>
+
+      {filteredTasks.length > 0 ? (
+        <div className="grid gap-6 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {filteredTasks.map(task => (
+            <TaskCard 
+              key={task.id} 
+              task={task} 
+              onEdit={handleEditTask} 
+              onDelete={() => setTaskToDelete(task.id)}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="mt-10 flex flex-col items-center justify-center text-center p-8 border-2 border-dashed border-muted-foreground/30 rounded-lg bg-card">
+          <AlertTriangle className="h-16 w-16 text-muted-foreground/50 mb-4" />
+          <h2 className="text-xl font-semibold text-foreground mb-2">No Tasks Found</h2>
+          <p className="text-muted-foreground">
+            Try adjusting your search or filters, or create a new task.
+          </p>
+           <Button asChild className="mt-6">
+            <Link href="/tasks/create">
+                <PlusCircle className="mr-2 h-4 w-4" /> Create Task
+            </Link>
+        </Button>
+        </div>
+      )}
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={!!taskToDelete} onOpenChange={(open) => !open && setTaskToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure you want to delete this task?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete the task
+              "{tasks.find(t => t.id === taskToDelete)?.title || ''}".
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setTaskToDelete(null)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDeleteTask} className={buttonVariants({ variant: "destructive" })}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+    </div>
+  );
+}
+
+// Helper hook for state persistence in URL (optional, can be complex)
+// For now, local state for filters is fine.
