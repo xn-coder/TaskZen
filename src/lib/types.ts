@@ -1,25 +1,25 @@
 
-export interface User {
-  id: string;
+export interface Profile { // Renamed from User for clarity with Supabase
+  id: string; // UUID, matches Supabase auth user ID
   name: string;
-  email: string;
-  avatar?: string; // URL to avatar image
+  email: string; // Denormalized from auth.users for convenience
+  avatar_url?: string; // Optional avatar URL from Supabase storage or user_metadata
 }
 
 export type TaskStatus = "To Do" | "In Progress" | "Done" | "Overdue";
 export type TaskPriority = "Low" | "Medium" | "High";
 
 export interface Task {
-  id: string;
+  id: string; // UUID from Supabase
   title: string;
   description: string;
-  dueDate: string; // ISO string
+  due_date: string; // ISO string (Supabase timestamptz)
   priority: TaskPriority;
-  status: TaskStatus;
-  assigneeId?: string; // Store assignee ID
-  assignee?: User; // Optional: denormalized user object for display
-  createdById: string; // Store creator ID
-  createdBy?: User; // Optional: denormalized user object for display
-  createdAt: string; // ISO string
-  updatedAt: string; // ISO string
+  status: TaskStatus; // "Overdue" is client-calculated. DB stores "To Do", "In Progress", "Done"
+  assignee_id?: string | null; // UUID, FK to profiles.id
+  assignee?: Profile | null; // Optional: denormalized profile object for display
+  created_by_id: string; // UUID, FK to profiles.id
+  created_by?: Profile; // Optional: denormalized profile object for display
+  created_at: string; // ISO string (Supabase timestamptz)
+  updated_at: string; // ISO string (Supabase timestamptz)
 }

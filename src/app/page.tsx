@@ -20,6 +20,7 @@ export default function HomePage() {
     }
   }, [user, isInitialLoading, router]);
 
+  // Show loading spinner while initial auth check is in progress
   return (
     <div className="flex h-screen w-screen items-center justify-center bg-background">
       <Loader2 className="h-16 w-16 animate-spin text-primary" />

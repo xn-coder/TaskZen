@@ -4,14 +4,14 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import type { Task, TaskPriority, TaskStatus } from '@/lib/types';
 import { useAuth } from '@/contexts/AuthContext';
-import { mockTasks as allMockTasks, getTasksWithResolvedStatus, deleteTask as apiDeleteTask } from '@/lib/store';
+import { getTasks, deleteTask as apiDeleteTask } from '@/lib/taskService'; // Use taskService
 import { TaskCard } from '@/components/tasks/TaskCard';
 import { TaskFilter } from '@/components/tasks/TaskFilter';
 import { TaskSearch } from '@/components/tasks/TaskSearch';
-import { Button, buttonVariants } from '@/components/ui/button';
+import { Button, buttonVariants } from "@/components/ui/button"; // Ensure buttonVariants is imported
 import { Loader2, PlusCircle, AlertTriangle } from 'lucide-react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation'; // Import useRouter
 import { useToast } from "@/hooks/use-toast";
 import {
   AlertDialog,
@@ -22,7 +22,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
 export default function TasksPage() {
@@ -30,34 +29,72 @@ export default function TasksPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const searchParams = useSearchParams();
+  const router = useRouter(); // Initialize router
   const { toast } = useToast();
   const [taskToDelete, setTaskToDelete] = useState<string | null>(null);
 
-  // Filters state
   const [filters, setFilters] = useState<{ status: TaskStatus[]; priority: TaskPriority[] }>({
     status: [],
     priority: [],
   });
 
   useEffect(() => {
-    if (!authLoading) {
+    if (!authLoading && user) { // Ensure user is loaded before fetching
       setIsLoading(true);
-      // Simulate API call
-      setTimeout(() => {
-        const processedTasks = getTasksWithResolvedStatus(allMockTasks);
-        setTasks(processedTasks);
-        setIsLoading(false);
-      }, 300);
+      getTasks(user.id) // Pass user.id if you want to filter tasks by user (e.g., for "My Tasks")
+                       // Or remove user.id if this page should show all tasks (admin view)
+        .then(fetchedTasks => {
+          setTasks(fetchedTasks);
+        })
+        .catch(error => {
+          console.error("Failed to load tasks:", error);
+          toast({ title: "Error", description: "Could not load tasks.", variant: "destructive" });
+        })
+        .finally(() => {
+          setIsLoading(false);
+        });
+    } else if (!authLoading && !user) {
+      router.replace('/login');
     }
-  }, [user, authLoading]);
+  }, [user, authLoading, router, toast]);
 
   const query = searchParams.get("query") || "";
+  const initialFilterParam = searchParams.get("filter"); // For dashboard links
+
+  useEffect(() => {
+    if (initialFilterParam && user?.profile) {
+      // This is a simplified filter based on dashboard links. 
+      // For a more robust solution, consider dedicated filter state in URL or context.
+      if (initialFilterParam === "assigned") {
+        // This would require tasks to have assignee info readily available for filtering.
+        // The current getTasks might not be specific enough.
+        // For now, this is a placeholder. A proper implementation would fetch tasks assigned to user.id
+        // Or, filter client-side if all tasks are fetched.
+         setTasks(prevTasks => prevTasks.filter(t => t.assignee_id === user.id));
+      } else if (initialFilterParam === "created") {
+         setTasks(prevTasks => prevTasks.filter(t => t.created_by_id === user.id));
+      } else if (initialFilterParam === "overdue") {
+         setFilters(prev => ({...prev, status: ['Overdue']}));
+      }
+    }
+  }, [initialFilterParam, user]);
+
 
   const filteredTasks = useMemo(() => {
-    return tasks
+    let tasksToFilter = tasks;
+    // Apply pre-filter from URL if any (basic example)
+    if (user?.profile) {
+        if (initialFilterParam === "assigned") {
+            tasksToFilter = tasks.filter(task => task.assignee_id === user.id);
+        } else if (initialFilterParam === "created") {
+            tasksToFilter = tasks.filter(task => task.created_by_id === user.id);
+        }
+    }
+    
+    return tasksToFilter
       .filter(task => 
         (task.title.toLowerCase().includes(query.toLowerCase()) || 
-         task.description.toLowerCase().includes(query.toLowerCase()))
+         (task.description && task.description.toLowerCase().includes(query.toLowerCase())))
       )
       .filter(task => 
         filters.status.length === 0 || filters.status.includes(task.status)
@@ -65,38 +102,41 @@ export default function TasksPage() {
       .filter(task =>
         filters.priority.length === 0 || filters.priority.includes(task.priority)
       );
-  }, [tasks, query, filters]);
+  }, [tasks, query, filters, initialFilterParam, user]);
 
   const handleFilterChange = useCallback((filterType: "status" | "priority", value: string) => {
     setFilters(prevFilters => {
-      const currentFilterValues = prevFilters[filterType] as string[];
+      const currentFilterValues = prevFilters[filterType] as string[]; // Type assertion
       const newFilterValues = currentFilterValues.includes(value)
         ? currentFilterValues.filter(v => v !== value)
         : [...currentFilterValues, value];
-      return { ...prevFilters, [filterType]: newFilterValues };
+      return { ...prevFilters, [filterType]: newFilterValues as TaskStatus[] | TaskPriority[] }; // Type assertion
     });
   }, []);
 
   const clearFilters = useCallback(() => {
     setFilters({ status: [], priority: [] });
-  }, []);
+    // Optionally clear URL "filter" param if it was used for initial state
+    const params = new URLSearchParams(searchParams);
+    params.delete("filter");
+    router.replace(`${router.pathname}?${params.toString()}`);
+  }, [searchParams, router]);
 
   const handleEditTask = (task: Task) => {
-    // Placeholder for edit functionality routing or modal
-    // router.push(`/tasks/${task.id}/edit`);
-    toast({ title: "Edit Clicked", description: `Editing task: ${task.title}`});
+    // For now, using toast as placeholder. In real app, navigate to an edit page/modal.
+    // router.push(`/tasks/edit/${task.id}`);
+    toast({ title: "Edit Clicked", description: `Editing task: ${task.title}. (Edit page/modal not implemented)`});
   };
 
   const confirmDeleteTask = async () => {
     if (!taskToDelete) return;
+    const taskTitle = tasks.find(t => t.id === taskToDelete)?.title || "Task";
     try {
-      // await apiDeleteTask(taskToDelete); // In real app
-      // For mock:
-      const taskTitle = tasks.find(t => t.id === taskToDelete)?.title || "Task";
+      await apiDeleteTask(taskToDelete);
       setTasks(prevTasks => prevTasks.filter(t => t.id !== taskToDelete));
       toast({ title: "Task Deleted", description: `"${taskTitle}" has been deleted.` });
-    } catch (error) {
-      toast({ title: "Error Deleting Task", description: "Could not delete task.", variant: "destructive" });
+    } catch (error: any) {
+      toast({ title: "Error Deleting Task", description: error.message || "Could not delete task.", variant: "destructive" });
     } finally {
       setTaskToDelete(null);
     }
@@ -109,6 +149,8 @@ export default function TasksPage() {
       </div>
     );
   }
+  
+  if (!user) return null; // Should be handled by ProtectedRoute or useEffect redirect
 
   return (
     <div className="container mx-auto py-2">
@@ -158,7 +200,6 @@ export default function TasksPage() {
         </div>
       )}
 
-      {/* Delete Confirmation Dialog */}
       <AlertDialog open={!!taskToDelete} onOpenChange={(open) => !open && setTaskToDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -180,7 +221,3 @@ export default function TasksPage() {
     </div>
   );
 }
-
-// Helper hook for state persistence in URL (optional, can be complex)
-// For now, local state for filters is fine.
-

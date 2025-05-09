@@ -1,7 +1,7 @@
 
 "use client";
 
-import type { Task, User } from "@/lib/types";
+import type { Task, Profile } from "@/lib/types"; // Updated to use Profile
 import {
   Card,
   CardContent,
@@ -36,16 +36,9 @@ const priorityColors: Record<Task["priority"], string> = {
   High: "bg-red-500 hover:bg-red-600",
 };
 
-const statusColors: Record<Task["status"], string> = {
-  "To Do": "bg-gray-500 hover:bg-gray-600",
-  "In Progress": "bg-sky-500 hover:bg-sky-600",
-  Done: "bg-green-500 hover:bg-green-600",
-  Overdue: "bg-orange-500 hover:bg-orange-600",
-};
-
 const statusIcons: Record<Task["status"], React.ElementType> = {
   "To Do": Zap,
-  "In Progress": Zap, // Could use a different icon like Activity
+  "In Progress": Zap, 
   Done: CheckCircle2,
   Overdue: AlertTriangle,
 };
@@ -71,7 +64,7 @@ export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
       <CardContent className="flex-grow space-y-3">
         <div className="flex items-center text-sm text-muted-foreground">
           <CalendarDays className="mr-2 h-4 w-4" />
-          <span>Due: {format(parseISO(task.dueDate), "MMM d, yyyy")}</span>
+          <span>Due: {task.due_date ? format(parseISO(task.due_date), "MMM d, yyyy") : 'N/A'}</span>
         </div>
         
         <div className="flex items-center text-sm">
@@ -98,8 +91,10 @@ export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
             <Tooltip>
               <TooltipTrigger asChild>
                 <Avatar className="ml-2 h-6 w-6">
-                  <AvatarImage src={task.assignee.avatar || `https://avatar.vercel.sh/${task.assignee.email}.png`} alt={task.assignee.name} data-ai-hint="profile avatar"/>
-                  <AvatarFallback>{task.assignee.name.charAt(0)}</AvatarFallback>
+                  <AvatarImage 
+                    src={task.assignee.avatar_url || `https://avatar.vercel.sh/${task.assignee.email || task.assignee.id}.png`} 
+                    alt={task.assignee.name} data-ai-hint="profile avatar"/>
+                  <AvatarFallback>{task.assignee.name.charAt(0).toUpperCase()}</AvatarFallback>
                 </Avatar>
               </TooltipTrigger>
               <TooltipContent>
@@ -108,9 +103,9 @@ export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
             </Tooltip>
           </div>
         )}
-         {task.createdBy && (
+         {task.created_by && (
           <div className="flex items-center text-xs text-muted-foreground/80 pt-1">
-            <span>Created by: {task.createdBy.name}</span>
+            <span>Created by: {task.created_by.name}</span>
           </div>
         )}
       </CardContent>

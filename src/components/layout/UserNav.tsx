@@ -19,12 +19,15 @@ import { LogOut, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 export function UserNav() {
-  const { user, logout, isLoading } = useAuth();
+  const { user, logout, isLoading: authActionLoading } = useAuth(); // Renamed isLoading to authActionLoading
   const { toast } = useToast();
 
-  if (!user) {
-    return null; // Or a login button if appropriate in this context
+  if (!user || !user.profile) { // Check for user and profile
+    // If still loading or no user/profile, show minimal or nothing
+    return authActionLoading ? <Loader2 className="h-6 w-6 animate-spin" /> : null; 
   }
+
+  const { profile } = user; // Destructure profile for easier access
 
   const handleLogout = async () => {
     try {
@@ -42,22 +45,26 @@ export function UserNav() {
     }
   };
 
+  const avatarSrc = profile.avatar_url || `https://avatar.vercel.sh/${profile.email || profile.id}.png`;
+  const avatarFallback = profile.name ? profile.name.charAt(0).toUpperCase() : (profile.email ? profile.email.charAt(0).toUpperCase() : 'U');
+
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" className="relative h-10 w-10 rounded-full">
           <Avatar className="h-9 w-9">
-            <AvatarImage src={user.avatar || `https://avatar.vercel.sh/${user.email}.png`} alt={user.name} data-ai-hint="profile avatar" />
-            <AvatarFallback>{user.name.charAt(0).toUpperCase()}</AvatarFallback>
+            <AvatarImage src={avatarSrc} alt={profile.name || 'User Avatar'} data-ai-hint="profile avatar" />
+            <AvatarFallback>{avatarFallback}</AvatarFallback>
           </Avatar>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-56" align="end" forceMount>
         <DropdownMenuLabel className="font-normal">
           <div className="flex flex-col space-y-1">
-            <p className="text-sm font-medium leading-none">{user.name}</p>
+            <p className="text-sm font-medium leading-none">{profile.name}</p>
             <p className="text-xs leading-none text-muted-foreground">
-              {user.email}
+              {profile.email}
             </p>
           </div>
         </DropdownMenuLabel>
@@ -73,8 +80,8 @@ export function UserNav() {
           ))}
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={handleLogout} disabled={isLoading}>
-          {isLoading ? (
+        <DropdownMenuItem onClick={handleLogout} disabled={authActionLoading}>
+          {authActionLoading ? (
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
           ) : (
             <LogOut className="mr-2 h-4 w-4" />
