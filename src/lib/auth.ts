@@ -22,10 +22,12 @@ async function fetchUserWithProfile(authUser: SupabaseAuthUser | null): Promise<
     if (profileError.code === '42P01') { // Specific code for "undefined_table" or "relation does not exist"
       console.error(`Error fetching profile for user ${userIdForLog}: The 'profiles' table does not exist. Code: ${profileError.code}, Message: ${profileError.message}. Please ensure the 'profiles' table is created in your database. Check migrations or Supabase SQL Editor. Full error:`, profileError);
     } else if (typeof profileError === 'object' && profileError !== null && Object.keys(profileError).length === 0) {
+      // Log a more generic message for an empty error object, but mention it might be RLS/table/network
       console.error(`Error fetching profile for user ${userIdForLog}: Received an empty error object {}. This could indicate a problem with RLS policies on the 'profiles' table, the table might not exist, or a network issue. Supabase error code: ${profileError.code || 'N/A'}, Message: ${profileError.message || 'N/A'}`);
     } else if (typeof profileError === 'object' && profileError !== null) {
       console.error(`Error fetching profile for user ${userIdForLog}: Code: ${profileError.code || 'N/A'}, Message: ${profileError.message || 'N/A'}. Full error:`, profileError);
     } else {
+      // Handle cases where profileError might not be a standard Supabase error object
       console.error(`Error fetching profile for user ${userIdForLog}: Non-object error:`, profileError);
     }
     // On any significant error fetching profile, return user with profile as null for graceful degradation.

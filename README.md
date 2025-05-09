@@ -1,3 +1,4 @@
+
 # Firebase Studio
 
 This is a NextJS starter in Firebase Studio.
@@ -30,26 +31,39 @@ This application requires certain database tables and configurations to be prese
 
 ### Initial Schema (Profiles Table and Tasks Table)
 
-If you are setting up the project for the first time, or if you encounter errors related to a missing `profiles` table (e.g., "relation 'public.profiles' does not exist") or `tasks` table, you need to apply the initial database schema.
+If you are setting up the project for the first time, or if you encounter errors related to missing tables, such as:
+- `"relation 'public.profiles' does not exist"`
+- `"relation 'public.tasks' does not exist"`
+you need to apply the initial database schema.
 
 The SQL for this is located in:
 - `supabase/migrations/0001_setup_profiles.sql` (for user profiles)
-- `supabase/migrations/0002_setup_tasks.sql` (for tasks - *you will need to create this file if task management is part of your application*)
+- `supabase/migrations/0002_setup_tasks.sql` (for tasks)
 
 **How to apply SQL migrations:**
 
 1.  Navigate to your Supabase project dashboard.
 2.  Go to the **SQL Editor** section (usually found in the sidebar).
 3.  Click on **+ New query**.
-4.  Open the respective `.sql` migration file (e.g., `supabase/migrations/0001_setup_profiles.sql`).
+4.  Open the respective `.sql` migration file from the `supabase/migrations` directory in your project:
+    *   First, run `0001_setup_profiles.sql`.
+    *   Then, run `0002_setup_tasks.sql`.
 5.  Copy the entire content of the SQL file.
 6.  Paste the copied SQL into the Supabase SQL editor.
 7.  Click **RUN**.
-8.  Repeat for any other necessary migration files in order.
+8.  Repeat for any other necessary migration files in their numerical order.
 
 **The `0001_setup_profiles.sql` script will:**
 *   Create the `profiles` table, which stores user profile information linked to `auth.users`.
 *   Set up Row Level Security (RLS) policies for the `profiles` table, allowing users to manage their own profiles and making profiles publicly readable.
 *   Create a database trigger that automatically creates a new profile entry in `public.profiles` whenever a new user signs up via `auth.users`. This trigger attempts to populate the `name` and `avatar_url` from the `raw_user_meta_data` provided during sign-up.
 
+**The `0002_setup_tasks.sql` script will:**
+*   Create the `tasks` table for managing tasks.
+*   Define necessary columns like `title`, `description`, `due_date`, `priority`, `status`, `assignee_id`, `created_by_id`.
+*   Set up foreign key relationships to the `profiles` table.
+*   Implement Row Level Security (RLS) policies for tasks, ensuring users can only access and modify tasks they are authorized to.
+*   Create a trigger to automatically update the `updated_at` timestamp for tasks.
+
 **Note for existing users:** If you had users in your `auth.users` table *before* applying the `0001_setup_profiles.sql` script, their profiles will not be automatically created by the trigger for those pre-existing users. You may need to manually create profile entries for them or write a separate script to backfill this data. For new sign-ups *after* the script is run, profiles will be created automatically.
+Ensure these migrations are run in order to avoid foreign key constraint errors.
