@@ -59,10 +59,12 @@ export default function DashboardPage() {
     return null; // Or redirect, handled by ProtectedRoute
   }
 
-  const renderTaskSection = (title: string, tasksToDisplay: Task[], icon: React.ElementType, emptyMessage: string, emptyIcon?: React.ElementType) => (
+  const renderTaskSection = (title: string, tasksToDisplay: Task[], IconComponent: React.ElementType, emptyMessage: string, EmptyIconComponent?: React.ElementType) => (
     <section className="mb-8">
       <h2 className="mb-4 text-2xl font-semibold flex items-center">
-        <span className="mr-2 p-2 bg-primary/10 text-primary rounded-lg"><svelte:component this={icon} size={24} /></span>
+        <span className="mr-2 p-2 bg-primary/10 text-primary rounded-lg">
+          <IconComponent size={24} />
+        </span>
         {title} ({tasksToDisplay.length})
       </h2>
       {tasksToDisplay.length > 0 ? (
@@ -73,7 +75,7 @@ export default function DashboardPage() {
         </div>
       ) : (
         <Card className="p-6 text-center text-muted-foreground border-dashed">
-          {emptyIcon && <svelte:component this={emptyIcon} size={48} className="mx-auto mb-4 text-muted-foreground/50" />}
+          {EmptyIconComponent && <EmptyIconComponent size={48} className="mx-auto mb-4 text-muted-foreground/50" />}
           <p>{emptyMessage}</p>
           <Button asChild variant="link" className="mt-2">
             <Link href="/tasks/create">Create a new task</Link>
