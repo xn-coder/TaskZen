@@ -18,10 +18,10 @@ async function fetchUserWithProfile(authUser: SupabaseAuthUser | null): Promise<
     .single();
 
   if (profileError && profileError.code !== 'PGRST116') { // PGRST116: single row not found (e.g. profile doesn't exist)
-    // This is an actual error, not just "profile not found".
-    // Log it, trying to be more informative if profileError is an unusual object like {}.
     const userIdForLog = authUser.id || 'unknown user';
-    if (typeof profileError === 'object' && profileError !== null && Object.keys(profileError).length === 0) {
+    if (profileError.code === '42P01') { // Specific code for "undefined_table" or "relation does not exist"
+      console.error(`Error fetching profile for user ${userIdForLog}: The 'profiles' table does not exist. Code: ${profileError.code}, Message: ${profileError.message}. Please ensure the 'profiles' table is created in your database. Check migrations or Supabase SQL Editor. Full error:`, profileError);
+    } else if (typeof profileError === 'object' && profileError !== null && Object.keys(profileError).length === 0) {
       console.error(`Error fetching profile for user ${userIdForLog}: Received an empty error object {}. This could indicate a problem with RLS policies on the 'profiles' table, the table might not exist, or a network issue. Supabase error code: ${profileError.code || 'N/A'}, Message: ${profileError.message || 'N/A'}`);
     } else if (typeof profileError === 'object' && profileError !== null) {
       console.error(`Error fetching profile for user ${userIdForLog}: Code: ${profileError.code || 'N/A'}, Message: ${profileError.message || 'N/A'}. Full error:`, profileError);
@@ -67,7 +67,7 @@ export const register = async (name: string, email: string, password: string): P
     password,
     options: {
       data: {
-        name: name, // Store name in user_metadata, will be used to create profile
+        name: name, // Store name in user_metadata, will be used to create profile by server-side trigger
       }
     }
   };
@@ -77,26 +77,13 @@ export const register = async (name: string, email: string, password: string): P
   if (signUpError) throw signUpError;
   if (!authData.user) throw new Error("Registration failed, no user data returned.");
 
-  // Create a profile entry.
-  const { error: profileErrorOnInsert } = await supabase
-    .from('profiles')
-    .insert({ 
-      id: authData.user.id, 
-      name: name, 
-      email: authData.user.email,
-      // avatar_url can be set here or updated later by the user
-    });
-
-  if (profileErrorOnInsert) {
-    console.error(`User ${authData.user.id} registered, but profile creation failed:`, profileErrorOnInsert);
-    // Even if profile creation fails, we proceed to fetch the user.
-    // fetchUserWithProfile will likely return profile: null in this case.
-    // This situation might warrant more specific error handling or user notification.
-  }
+  // Client-side profile insertion is now primarily handled by the server-side trigger 'on_auth_user_created'.
+  // The trigger uses 'name' and 'avatar_url' (if provided) from authData.user.raw_user_meta_data.
+  // We still fetch the userWithProfile to return it, which will reflect the profile created by the trigger.
   
   const userWithProfile = await fetchUserWithProfile(authData.user);
    if (!userWithProfile) throw new Error("Registration successful but failed to fetch profile post-creation attempt.");
-  // As with login, userWithProfile.profile could be null.
+  // As with login, userWithProfile.profile could be null if the trigger failed or there's a replication delay.
   return userWithProfile;
 };
 
