@@ -67,3 +67,36 @@ The SQL for this is located in:
 
 **Note for existing users:** If you had users in your `auth.users` table *before* applying the `0001_setup_profiles.sql` script, their profiles will not be automatically created by the trigger for those pre-existing users. You may need to manually create profile entries for them or write a separate script to backfill this data. For new sign-ups *after* the script is run, profiles will be created automatically.
 Ensure these migrations are run in order to avoid foreign key constraint errors.
+
+## Customizing Supabase Email Templates
+
+### Including User's Full Name in Confirmation Email
+
+By default, the Supabase confirmation email might not include the user's full name. To personalize it, you can edit the email template directly in your Supabase project dashboard.
+
+1.  **Ensure Name is Sent During Signup:**
+    The application is already configured to send the user's full name to Supabase during registration. This is done in `src/lib/auth.ts` by including the `name` in the `options.data` field of the `supabase.auth.signUp` call. This `name` is stored in the `raw_user_meta_data` of the `auth.users` table and is used by the `on_auth_user_created` trigger to populate the `profiles` table.
+
+2.  **Modify the Supabase Email Template:**
+    *   Go to your Supabase project dashboard.
+    *   Navigate to **Authentication** (under the "Auth" section in the sidebar).
+    *   Click on the **Templates** tab.
+    *   Find the **Confirm signup** email template (it might also be labeled "Confirmation Mail" or similar).
+    *   Click to edit this template.
+    *   You can use Liquid templating syntax here. To include the user's full name (which was stored under the `name` key in `user_metadata` during signup), you can use the variable `{{ .User.UserMetadata.name }}`.
+    *   For example, you could change a generic greeting like:
+        ```html
+        <h2>Confirm your signup</h2>
+        <p>Follow this link to confirm your user:</p>
+        ```
+        to something more personal:
+        ```html
+        <h2>Confirm your signup, {{ .User.UserMetadata.name }}!</h2>
+        <p>Hey {{ .User.UserMetadata.name }},</p>
+        <p>Thanks for signing up. Please follow this link to confirm your user:</p>
+        ```
+    *   Make sure to use the correct path. If the `name` field was nested differently in `options.data` during `signUp`, adjust `{{ .User.UserMetadata.name }}` accordingly.
+    *   Save the changes to the template.
+
+New users signing up should now receive a confirmation email that includes their full name, provided it's correctly passed during signup and the template uses the `{{ .User.UserMetadata.name }}` variable.
+```
