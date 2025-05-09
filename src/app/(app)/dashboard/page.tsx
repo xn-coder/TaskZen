@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import type { Task } from '@/lib/types';
 import { useAuth } from '@/contexts/AuthContext';
-import { getDashboardTasks } from '@/lib/taskService'; // Use taskService
+import { getDashboardTasks } from '@/lib/taskService';
 import { TaskCard } from '@/components/tasks/TaskCard';
 import { Loader2, ListChecks, UserPlus, AlertOctagon, CheckSquare, AlertTriangle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,90 +12,83 @@ import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { useToast } from "@/hooks/use-toast";
 
-
 const handleEditTaskRedirect = (task: Task, router: ReturnType<typeof useRouter>) => {
   const { toast } = useToast();
   toast({ title: "Edit Action", description: `To edit '${task.title}', please go to the All Tasks page.`});
 };
 
-
 export default function DashboardPage() {
-  const { user, isInitialLoading: authLoading } = useAuth();
+  const { user, isInitialLoading: authContextLoading } = useAuth();
   const [dashboardTasks, setDashboardTasks] = useState<{ assignedTasks: Task[], createdTasks: Task[], overdueTasks: Task[] }>({
     assignedTasks: [],
     createdTasks: [],
     overdueTasks: [],
   });
-  const [isLoading, setIsLoading] = useState(true); // Combined loading state for the page
+  const [isFetchingTasks, setIsFetchingTasks] = useState(true); // Specific for task fetching
   const router = useRouter();
   const { toast } = useToast();
 
-
   useEffect(() => {
-    // Scenario 1: Auth is still loading.
-    if (authLoading) {
-      setIsLoading(true); // General page loading is true
+    // If auth is still loading, or no user yet, don't do anything here.
+    // ProtectedRoute and the initial checks below will handle UI.
+    if (authContextLoading || !user) {
+      setIsFetchingTasks(false); // Not fetching tasks if auth isn't ready
       return;
     }
 
-    // Scenario 2: Auth is done, but no user. Redirect.
-    if (!user) {
-      router.replace('/login');
-      setIsLoading(false); // Stop general page loading as we are redirecting
+    // At this point, authContextLoading is false, and user object exists.
+    // Now, check for profile.
+    if (!user.profile) {
+      // Profile is not yet available. AuthContext might still be fetching it, or it failed.
+      // We don't start fetching tasks. The UI below will handle showing a message.
+      // This useEffect will re-run when `user` (and hopefully `user.profile`) updates.
+      setIsFetchingTasks(false); // Not fetching if profile is missing
       return;
     }
 
-    // Scenario 3: Auth is done, user exists, but profile is not yet loaded/available.
-    if (user && !user.profile) {
-      // console.log("Dashboard: User loaded, waiting for profile...");
-      setIsLoading(true); // Keep page loading, as profile is essential for dashboard content/logic
-      // Potentially add a timeout here or a listener for profile update if it's highly async
-      // For now, relying on `user` object update from AuthContext to re-trigger this effect.
-      return;
-    }
+    // User and profile are available. Fetch tasks.
+    // console.log("Dashboard: User and profile loaded, fetching tasks for user:", user.id);
+    setIsFetchingTasks(true);
+    getDashboardTasks(user.id)
+      .then(data => {
+        setDashboardTasks(data);
+      })
+      .catch(error => {
+        console.error("Failed to load dashboard tasks:", error);
+        toast({ title: "Error", description: "Could not load dashboard tasks.", variant: "destructive" });
+      })
+      .finally(() => {
+        setIsFetchingTasks(false);
+      });
 
-    // Scenario 4: Auth is done, user exists, profile exists. Fetch tasks.
-    if (user && user.profile) {
-      // console.log("Dashboard: User and profile loaded, fetching tasks for user:", user.id);
-      setIsLoading(true); // Set loading true specifically for task fetching operation
-      getDashboardTasks(user.id)
-        .then(data => {
-          setDashboardTasks(data);
-        })
-        .catch(error => {
-          console.error("Failed to load dashboard tasks:", error);
-          toast({ title: "Error", description: "Could not load dashboard tasks.", variant: "destructive" });
-        })
-        .finally(() => {
-          setIsLoading(false); // Task fetching attempt (success or fail) is complete
-        });
-    }
-  }, [user, authLoading, router, toast]);
+  }, [user, authContextLoading, router, toast]);
 
 
   const handleDeleteTaskPlaceholder = (taskId: string) => {
      toast({ title: "Delete Action", description: `To delete tasks, please go to the All Tasks page.`});
   };
 
-
-  if (isLoading) { // Covers authLoading, profile pending, and task fetching
+  // 1. Handle Auth Loading
+  if (authContextLoading) {
     return (
       <div className="flex h-full items-center justify-center">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
+        <p className="ml-3 text-lg text-foreground">Authenticating...</p>
       </div>
     );
   }
 
-  // This state implies authLoading is false, isLoading (for tasks/profile) is false,
-  // but user or user.profile is still not available. This is an unexpected state
-  // if useEffect correctly handles redirects and profile loading.
-  if (!user || !user.profile) {
+  // 2. Auth is done, but no user (should be caught by ProtectedRoute, but as a fallback)
+  if (!user) {
+    // This state indicates an issue if ProtectedRoute didn't redirect.
+    // For robustness, we can show a loader while redirecting.
+    // router.replace('/login'); // This might be too aggressive here, ProtectedRoute handles it.
     return (
        <div className="flex h-full flex-col items-center justify-center text-center p-6">
         <AlertTriangle className="h-16 w-16 text-destructive mb-4" />
-        <h2 className="text-xl font-semibold text-foreground mb-2">Could Not Load User Data</h2>
+        <h2 className="text-xl font-semibold text-foreground mb-2">Authentication Issue</h2>
         <p className="text-muted-foreground mb-6">
-          There was an issue retrieving your profile information. Please try logging in again.
+          User data is not available. You might be redirected to login.
         </p>
         <Button onClick={() => router.push('/login')} variant="outline">
           Go to Login
@@ -104,6 +97,38 @@ export default function DashboardPage() {
     );
   }
 
+  // 3. Auth is done, user exists, but profile is missing.
+  if (!user.profile) {
+    return (
+       <div className="flex h-full flex-col items-center justify-center text-center p-6">
+        <AlertTriangle className="h-16 w-16 text-destructive mb-4" />
+        <h2 className="text-xl font-semibold text-foreground mb-2">Profile Not Loaded</h2>
+        <p className="text-muted-foreground mb-6 max-w-md">
+          Your profile information could not be loaded. This can happen if the 'profiles' table is missing in the database or if there are permission issues. Please ensure database migrations (especially `0001_setup_profiles.sql`) have been run. Refer to `README.md` for setup instructions.
+        </p>
+        <div className="flex gap-2">
+          <Button onClick={() => window.location.reload()} variant="outline">
+            Refresh Page
+          </Button>
+          <Button onClick={() => router.push('/login')} variant="default">
+            Logout and Login Again
+          </Button>
+        </div>
+      </div>
+    );
+  }
+  
+  // 4. User and profile are loaded. If tasks are still fetching, show task-specific loader.
+  if (isFetchingTasks) {
+     return (
+      <div className="flex h-full items-center justify-center">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+        <p className="ml-3 text-lg text-foreground">Loading dashboard tasks...</p>
+      </div>
+    );
+  }
+
+  // All checks passed, data loaded (or failed gracefully). Render the dashboard.
   const renderTaskSection = (title: string, tasksToDisplay: Task[], IconComponent: React.ElementType, emptyMessage: string, EmptyIconComponent?: React.ElementType, viewAllLink?: string) => (
     <section className="mb-8">
       <div className="flex justify-between items-center mb-4">
@@ -131,10 +156,10 @@ export default function DashboardPage() {
           ))}
         </div>
       ) : (
-        <Card className="p-6 text-center text-muted-foreground border-dashed">
+        <Card className="p-6 text-center text-muted-foreground border-dashed border-muted-foreground/30 rounded-lg bg-card">
           {EmptyIconComponent && <EmptyIconComponent size={48} className="mx-auto mb-4 text-muted-foreground/50" />}
           <p>{emptyMessage}</p>
-          <Button asChild variant="link" className="mt-2">
+          <Button asChild variant="link" className="mt-2 text-primary">
             <Link href="/tasks/create">Create a new task</Link>
           </Button>
         </Card>
