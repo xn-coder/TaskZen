@@ -82,33 +82,29 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
   });
 
   async function onSubmit(values: TaskFormValues) {
-    if (!authUser || !authUser.profile) { // AuthUser.profile might not be strictly needed if we only need uid
+    if (!authUser || !authUser.uid) { 
       toast({ title: "Error", description: "You must be logged in to perform this action.", variant: "destructive"});
       return;
     }
     setIsSubmitting(true);
 
-    // Prepare payload for Firestore
-    // Dates are handled by taskService (converted to Firebase Timestamps there)
     const taskPayloadBase = {
       ...values,
-      due_date: formatISO(values.due_date), // Keep as ISO string for taskService
+      due_date: formatISO(values.due_date), 
       description: values.description || "",
-      assignee_id: values.assignee_id || null, // Ensure null if undefined
+      assignee_id: values.assignee_id || null, 
     };
     
     try {
       let resultTask: Task;
       if (isEditing && initialData) {
-        // For updates, created_by_id and created_at are not changed
         resultTask = await updateTask(initialData.id, taskPayloadBase);
       } else {
-        // For new tasks, add created_by_id
         const fullPayloadForAdd = {
             ...taskPayloadBase,
             created_by_id: authUser.uid, // Use Firebase auth user UID for created_by_id
         };
-        resultTask = await addTask(fullPayloadForAdd as Omit<Task, 'id' | 'created_at' | 'updated_at' | 'status' | 'assignee' | 'created_by'> & { status: Exclude<TaskStatus, "Overdue'> } & { created_by_id: string });
+        resultTask = await addTask(fullPayloadForAdd as Omit<Task, 'id' | 'created_at' | 'updated_at' | 'status' | 'assignee' | 'created_by'> & { status: Exclude<TaskStatus, "Overdue"> } & { created_by_id: string });
       }
 
       toast({
@@ -283,3 +279,4 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
     </Form>
   );
 }
+
