@@ -12,7 +12,7 @@ import { processTask, getAllProfilesMap, updateTask as apiUpdateTask, deleteTask
 import { Loader2, AlertTriangle, CalendarDays, Users, Tag, MessageSquare, Send, Edit, Trash2, UserCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -59,7 +59,7 @@ export default function TaskDetailPage() {
         .from('tasks')
         .select(`
           *,
-          created_by_profile:profiles!created_by_id (
+          created_by_profile:profiles!tasks_created_by_id_fkey (
             id, name, email, avatar_url
           )
         `)
@@ -88,12 +88,8 @@ export default function TaskDetailPage() {
       let toastMessage = "An unexpected error occurred. Please try again.";
       let errorTitle = "Error Loading Task";
 
-      // Refined initial logging for the specific line in question
-      if (e && typeof e === 'object' && Object.keys(e).length === 0 && !(e instanceof Error && e.message)) {
-        console.warn("fetchTaskDetails: An empty error object {} was caught initially. This could be due to network issues, RLS, or an unspecific error from Supabase. Detailed analysis follows.", e);
-      } else {
-        console.error("Full error object in fetchTaskDetails:", e); // Original line, now part of conditional logging
-      }
+      // The initial generic logging block has been removed.
+      // Detailed analysis of 'e' follows.
 
       const pgError = e as PostgrestError; // Attempt to cast for common properties
 
@@ -109,12 +105,11 @@ export default function TaskDetailPage() {
           toastMessage = pgError.message || `An error occurred (Code: ${pgError.code}).`;
           if (pgError.details) toastMessage += ` Details: ${pgError.details}`;
           if (pgError.hint) toastMessage += ` Hint: ${pgError.hint}`;
-           console.error(`fetchTaskDetails: PostgrestError. Code: ${pgError.code || 'N/A'}, Message: "${pgError.message || 'N/A'}", Details: "${pgError.details || 'N/A'}", Hint: "${pgError.hint || 'N/A'}"`);
+           console.error(`fetchTaskDetails: PostgrestError. Code: ${pgError.code || 'N/A'}, Message: "${pgError.message || 'N/A'}", Details: "${pgError.details || 'N/A'}", Hint: "${pgError.hint || 'N/A'}"`, e);
         } else if (Object.keys(e).length === 0 ) { // It's an object, but no Postgrest properties, and it's empty
            uiError = "An empty error object was received while fetching task details.";
            toastMessage = "An unexpected issue occurred. This might be a network problem or misconfiguration. Check console for details.";
-           // The console.warn above provided the initial alert.
-           console.error("fetchTaskDetails: Confirmed empty error object with no identifiable Postgrest properties. This is unusual and may indicate network issues, RLS problems, or Supabase client behavior that needs investigation.");
+           console.error("fetchTaskDetails: Confirmed empty error object with no identifiable Postgrest properties. This is unusual and may indicate network issues, RLS problems, or Supabase client behavior that needs investigation.", e);
         } else {
           // Fallback for other object-type errors that aren't PGRST116 or clearly empty with no Postgrest props.
           uiError = "An unexpected object-based error occurred.";
