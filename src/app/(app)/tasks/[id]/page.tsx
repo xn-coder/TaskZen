@@ -1,4 +1,3 @@
-
 "use client";
 
 import type { PostgrestError } from "@supabase/supabase-js";
@@ -58,12 +57,7 @@ export default function TaskDetailPage() {
     try {
       const { data: taskDataFromDb, error: fetchError } = await supabase
         .from('tasks')
-        .select(`
-          *,
-          created_by_profile:profiles!tasks_created_by_id_fkey (
-            id, name, email, avatar_url
-          )
-        `)
+        .select('*') // Select all columns from tasks. Profile info will be resolved by processTask.
         .eq('id', taskId)
         .single();
 
@@ -85,14 +79,13 @@ export default function TaskDetailPage() {
       let toastMessage = "An unexpected error occurred. Please try again.";
       let errorTitle = "Error Loading Task";
       
-      // Log the raw error object for better diagnostics before specific checks
       if (typeof e === 'object' && e !== null && Object.keys(e).length === 0 && !(e as PostgrestError).message && !(e as PostgrestError).details) {
         console.warn("fetchTaskDetails: An empty error object {} was caught initially. This could be due to network issues, RLS, or an unspecific error from Supabase. Detailed analysis follows.", e);
       } else {
-        console.error("Full error object in fetchTaskDetails:", e); // Original line, now part of conditional logging
+        console.error("Full error object in fetchTaskDetails:", e); 
       }
 
-      const pgError = e as PostgrestError; // Attempt to cast for common properties
+      const pgError = e as PostgrestError;
 
       if (e && typeof e === 'object') {
         if (pgError.code === 'PGRST116') { 
