@@ -1,7 +1,7 @@
 
 "use client";
 
-import type { Task, Profile, Comment } from "@/lib/types";
+import type { Task } from "@/lib/types";
 import {
   Card,
   CardContent,
@@ -13,7 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { CalendarDays, Edit3, Trash2, Users, AlertTriangle, CheckCircle2, Zap, MessageSquare } from "lucide-react"; 
+import { CalendarDays, Edit3, Trash2, Users, AlertTriangle, CheckCircle2, Zap } from "lucide-react"; 
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 import {
@@ -23,7 +23,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useAuth } from "@/contexts/AuthContext";
-import { Separator } from "@/components/ui/separator";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 interface TaskCardProps {
   task: Task;
@@ -48,6 +49,7 @@ const statusIcons: Record<Task["status"], React.ElementType> = {
 
 export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
   const { user } = useAuth();
+  const router = useRouter();
   const StatusIcon = statusIcons[task.status] || Zap;
 
   const creatorName = task.created_by?.name || "Unknown Creator";
@@ -57,13 +59,24 @@ export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
   }
 
   const canDelete = user?.uid === task.created_by_id;
-  // User can edit if they are creator or an assignee (for status update and comments)
-  const canEdit = user?.uid === task.created_by_id || (task.assignee_ids && task.assignee_ids.includes(user?.uid || ""));
+  const canEditTaskDetails = user?.uid === task.created_by_id; // Only creator can edit core details
+  const canUpdateStatus = user?.uid === task.created_by_id || (task.assignee_ids && task.assignee_ids.includes(user?.uid || ""));
 
+
+  const handleCardClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    // Prevent navigation if a button inside the card was clicked
+    if ((e.target as HTMLElement).closest('button')) {
+      return;
+    }
+    router.push(`/tasks/${task.id}`);
+  };
 
   return (
     <TooltipProvider>
-    <Card className={cn("flex flex-col shadow-md hover:shadow-lg transition-shadow duration-200", className)}>
+    <Card 
+        className={cn("flex flex-col shadow-md hover:shadow-lg transition-shadow duration-200 cursor-pointer", className)}
+        onClick={handleCardClick}
+    >
       <CardHeader>
         <div className="flex justify-between items-start">
           <CardTitle className="text-lg font-semibold leading-tight">{task.title}</CardTitle>
@@ -136,45 +149,26 @@ export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
             <span>Created by: {creatorName}</span>
           </div>
         )}
-
-        {task.comments && task.comments.length > 0 && (
-          <div className="mt-3 pt-3 border-t border-border/50">
-            <h4 className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center">
-              <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
-              Recent Comments ({task.comments.length})
-            </h4>
-            <div className="space-y-1.5 max-h-20 overflow-y-auto text-xs">
-              {task.comments.slice(-2).map((comment, index) => ( // Show last 2 comments
-                <div key={index} className="p-1.5 bg-muted/50 rounded-md">
-                  <p className="font-medium text-foreground/80">{comment.userName}:</p>
-                  <p className="text-muted-foreground line-clamp-2">{comment.text}</p>
-                  <p className="text-xs text-muted-foreground/70 mt-0.5">{format(parseISO(comment.createdAt), "MMM d, hh:mm a")}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
       </CardContent>
       <CardFooter className="flex justify-end space-x-2 border-t pt-4">
         <Tooltip>
           <TooltipTrigger asChild>
-            <span tabIndex={canEdit ? undefined : 0}>
+            <span tabIndex={canEditTaskDetails ? undefined : 0}>
               <Button 
                 variant="outline" 
                 size="sm" 
-                onClick={() => onEdit(task)}
-                disabled={!canEdit}
-                aria-disabled={!canEdit}
+                onClick={(e) => { e.stopPropagation(); onEdit(task);}} // Stop propagation to prevent card click
+                disabled={!canEditTaskDetails}
+                aria-disabled={!canEditTaskDetails}
               >
                 <Edit3 className="mr-1 h-4 w-4" /> 
-                {user?.uid === task.created_by_id ? "Edit" : "Update Status"}
+                Edit
               </Button>
             </span>
           </TooltipTrigger>
-          {!canEdit && (
+          {!canEditTaskDetails && (
             <TooltipContent>
-              <p>You do not have permission to edit this task.</p>
+              <p>Only the task creator can edit core details.</p>
             </TooltipContent>
           )}
         </Tooltip>
@@ -185,7 +179,7 @@ export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
               <Button 
                 variant="destructive" 
                 size="sm" 
-                onClick={() => onDelete(task.id)}
+                onClick={(e) => { e.stopPropagation(); onDelete(task.id);}} // Stop propagation
                 disabled={!canDelete}
                 aria-disabled={!canDelete}
               >
@@ -204,3 +198,4 @@ export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
     </TooltipProvider>
   );
 }
+

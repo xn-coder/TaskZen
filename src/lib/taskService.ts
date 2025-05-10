@@ -1,6 +1,6 @@
 
 import { db } from './firebase';
-import type { Task, Profile, TaskStatus, Comment, TaskDocumentData } from './types';
+import type { Task, Profile, TaskStatus, Comment } from './types';
 import type { AppUser } from './auth'; // Import AppUser
 import {
   collection,
@@ -18,7 +18,7 @@ import {
   onSnapshot,
   QueryDocumentSnapshot,
   DocumentSnapshot, 
-  arrayUnion, // Import arrayUnion
+  arrayUnion, 
 } from 'firebase/firestore';
 import { formatISO, parseISO, isBefore } from 'date-fns';
 
@@ -37,8 +37,18 @@ const processTimestampsInDoc = (docData: any) => {
   // Process timestamps in comments
   if (data.comments && Array.isArray(data.comments)) {
     data.comments = data.comments.map((comment: any) => {
+      // Comments from Firestore might have createdAt as string or Timestamp
       if (comment.createdAt && comment.createdAt instanceof Timestamp) {
         return { ...comment, createdAt: formatISO(comment.createdAt.toDate()) };
+      } else if (typeof comment.createdAt === 'string') {
+        // If it's already a string (e.g. from optimistic update or client-set), ensure it's valid ISO
+        try {
+            parseISO(comment.createdAt); // Validate
+            return comment;
+        } catch (e) {
+            // Handle invalid string date if necessary, or assume valid for now
+            return { ...comment, createdAt: new Date().toISOString() }; // Fallback
+        }
       }
       return comment;
     });
@@ -46,11 +56,15 @@ const processTimestampsInDoc = (docData: any) => {
   return data;
 };
 
-const processTask = async (taskDocSnap: DocumentSnapshot, profilesMap: Map<string, Profile>): Promise<Task> => {
+export const processTask = async (taskDocSnap: DocumentSnapshot, profilesMap: Map<string, Profile>): Promise<Task> => {
   if (!taskDocSnap.exists()) {
     throw new Error(`Task document with ID ${taskDocSnap.id} does not exist.`);
   }
-  const taskData = processTimestampsInDoc({ id: taskDocSnap.id, ...taskDocSnap.data()! }); 
+  const taskDataFromDoc = taskDocSnap.data();
+  if (!taskDataFromDoc) {
+     throw new Error(`Task data for ID ${taskDocSnap.id} is null or undefined.`);
+  }
+  const taskData = processTimestampsInDoc({ id: taskDocSnap.id, ...taskDataFromDoc }); 
   
   const now = new Date();
   const dueDate = taskData.due_date ? parseISO(taskData.due_date) : new Date(0); 
@@ -67,17 +81,23 @@ const processTask = async (taskDocSnap: DocumentSnapshot, profilesMap: Map<strin
   }
   const createdByProfile = taskData.created_by_id ? profilesMap.get(taskData.created_by_id) : undefined;
 
+  // Sort comments by createdAt descending after processing timestamps
+  const sortedComments = (taskData.comments || []).sort((a: Comment, b: Comment) => 
+    parseISO(b.createdAt).getTime() - parseISO(a.createdAt).getTime()
+  );
+
+
   return {
     ...taskData,
     status: isOverdue ? 'Overdue' : taskData.status,
     assignee_ids: taskData.assignee_ids || [],
     assignees: assignees.length > 0 ? assignees : null, 
     created_by: createdByProfile, 
-    comments: taskData.comments || [], // Ensure comments is an array
+    comments: sortedComments,
   } as Task;
 };
 
-const getAllProfilesMap = async (): Promise<Map<string, Profile>> => {
+export const getAllProfilesMap = async (): Promise<Map<string, Profile>> => {
   const profilesMap = new Map<string, Profile>();
   try {
     const profilesCollection = collection(db, 'profiles');
@@ -113,11 +133,15 @@ export const getTasks = async (userId?: string): Promise<Task[]> => {
     assignedSnapshot.forEach(docSnap => taskMap.set(docSnap.id, docSnap)); 
 
     const tasksPromises = Array.from(taskMap.values())
-        .sort((a, b) => (b.data().created_at as Timestamp).toMillis() - (a.data().created_at as Timestamp).toMillis()) // Sort by created_at desc
+        .sort((a, b) => {
+            const timeA = (a.data().created_at as Timestamp) || Timestamp.now();
+            const timeB = (b.data().created_at as Timestamp) || Timestamp.now();
+            return timeB.toMillis() - timeA.toMillis();
+        }) 
         .map(docSnap => processTask(docSnap, profilesMap));
     return Promise.all(tasksPromises);
 
-  } else { // Fallback for admin-like view, not currently used but kept for completeness
+  } else { 
     q = query(tasksCollection, orderBy('created_at', 'desc'));
     const querySnapshot = await getDocs(q);
     const tasksPromises = querySnapshot.docs.map(docSnap => processTask(docSnap, profilesMap));
@@ -143,11 +167,13 @@ export const getDashboardTasks = async (userId: string): Promise<{ assignedTasks
   };
 };
 
-export const addTask = async (taskData: Omit<Task, 'id' | 'created_at' | 'updated_at' | 'status' | 'assignees' | 'created_by' | 'comments'> & { status: Exclude<TaskStatus, "Overdue"> }): Promise<Task> => {
+
+export const addTask = async (
+  taskData: Omit<Task, 'id' | 'created_at' | 'updated_at' | 'status' | 'assignees' | 'created_by' | 'comments'> & { status: Exclude<TaskStatus, "Overdue">; created_by_id: string }
+): Promise<Task> => {
   const tasksCollection = collection(db, 'tasks');
-  const payload = {
+  const payload: any = {
     ...taskData,
-    due_date: taskData.due_date ? Timestamp.fromDate(parseISO(taskData.due_date)) : Timestamp.now(),
     description: taskData.description || "", 
     assignee_ids: taskData.assignee_ids || [],
     comments: [], // Initialize comments as an empty array
@@ -155,13 +181,21 @@ export const addTask = async (taskData: Omit<Task, 'id' | 'created_at' | 'update
     updated_at: serverTimestamp(),
   };
 
+  // Convert due_date string to Firebase Timestamp
+  if (taskData.due_date) {
+    payload.due_date = Timestamp.fromDate(parseISO(taskData.due_date));
+  } else {
+    payload.due_date = Timestamp.now(); // Default if not provided
+  }
+  
+
   try {
     const docRef = await addDoc(tasksCollection, payload);
     const newDocSnap = await getDoc(docRef);
 
     if (!newDocSnap.exists()) {
-      console.error(`Failed to retrieve document (ID: ${docRef.id}) immediately after creation.`);
-      throw new Error("Failed to create task: Could not retrieve task data post-creation.");
+       console.error(`Failed to retrieve document (ID: ${docRef.id}) immediately after creation.`);
+       throw new Error("Failed to create task: Could not retrieve task data post-creation.");
     }
     
     const profilesMap = await getAllProfilesMap();
@@ -172,7 +206,7 @@ export const addTask = async (taskData: Omit<Task, 'id' | 'created_at' | 'update
   }
 };
 
-// Define a type for the data that can be updated, excluding resolved fields and ensuring dates are strings for input
+
 type TaskUpdatePayload = Partial<Omit<Task, 'id' | 'created_at' | 'updated_at' | 'assignees' | 'created_by' | 'comments'>>;
 
 
@@ -180,37 +214,36 @@ export const updateTask = async (
   taskId: string,
   taskUpdates: TaskUpdatePayload,
   newCommentText?: string,
-  currentUser?: AppUser | null
+  currentUser?: AppUser | null 
 ): Promise<Task> => {
   const taskDocRef = doc(db, 'tasks', taskId);
   
   const firestoreUpdatePayload: any = { updated_at: serverTimestamp() };
 
-  // Prepare main task updates
+  
   for (const key in taskUpdates) {
     if (Object.prototype.hasOwnProperty.call(taskUpdates, key)) {
       const typedKey = key as keyof TaskUpdatePayload;
       if (typedKey === 'due_date' && taskUpdates.due_date) {
         firestoreUpdatePayload.due_date = Timestamp.fromDate(parseISO(taskUpdates.due_date as string));
       } else if (typedKey === 'description' && taskUpdates.description === undefined) {
-        firestoreUpdatePayload.description = "";
+        firestoreUpdatePayload.description = ""; 
       } else if (typedKey === 'assignee_ids' && taskUpdates.assignee_ids) {
-        firestoreUpdatePayload.assignee_ids = taskUpdates.assignee_ids || [];
+         firestoreUpdatePayload.assignee_ids = taskUpdates.assignee_ids || [];
       }
-      else {
+       else {
         firestoreUpdatePayload[typedKey] = taskUpdates[typedKey];
       }
     }
   }
   
-  // Prepare comment if provided
+  
   if (newCommentText && newCommentText.trim() !== "" && currentUser && currentUser.uid) {
     const newComment: Comment = {
       userId: currentUser.uid,
       userName: currentUser.profile?.name || currentUser.displayName || "User",
       text: newCommentText.trim(),
-      createdAt: formatISO(new Date()), // Client-generated ISO string for simplicity with arrayUnion
-                                        // For server timestamp, would need a Cloud Function or more complex client logic
+      createdAt: new Date().toISOString(), // Client-generated ISO string for arrayUnion
     };
     firestoreUpdatePayload.comments = arrayUnion(newComment);
   }
@@ -250,6 +283,11 @@ export const onTasksUpdate = (
 ): (() => void) => {
   const tasksCollection = collection(db, 'tasks');
   
+  if (typeof callback !== 'function') {
+    console.error("onTasksUpdate: Callback is not a function.");
+    return () => {}; // Return a no-op unsubscribe function
+  }
+  
   callback({ tasks: [], isLoading: true }); 
 
   let currentCreatedDocs: QueryDocumentSnapshot[] = [];
@@ -265,7 +303,7 @@ export const onTasksUpdate = (
 
     processingTimeout = setTimeout(async () => {
         if (!createdListenerInitialized || !assignedListenerInitialized) {
-            if(callback) callback({ tasks: [], isLoading: true });
+            callback({ tasks: [], isLoading: true });
             return;
         }
         
@@ -281,9 +319,9 @@ export const onTasksUpdate = (
           }
         });
         
-        // Sort combined tasks by created_at desc before processing
+        
         const sortedTaskDocs = Array.from(taskMap.values()).sort((a, b) => {
-            const timeA = (a.data().created_at as Timestamp) || Timestamp.now(); // Fallback if somehow null
+            const timeA = (a.data().created_at as Timestamp) || Timestamp.now(); 
             const timeB = (b.data().created_at as Timestamp) || Timestamp.now();
             return timeB.toMillis() - timeA.toMillis();
         });
@@ -294,12 +332,12 @@ export const onTasksUpdate = (
         
         try {
             const allTasks = await Promise.all(tasksPromises);
-            if(callback) callback({ tasks: allTasks, isLoading: false });
+            callback({ tasks: allTasks, isLoading: false });
         } catch (error) {
             console.error("Error processing tasks for real-time update:", error);
-            if(callback) callback({ tasks: [], isLoading: false }); 
+            callback({ tasks: [], isLoading: false }); 
         }
-    }, 100); 
+    }, 150); // Slightly increased debounce time
   };
   
   const qCreated = query(tasksCollection, where('created_by_id', '==', userId));
@@ -310,7 +348,7 @@ export const onTasksUpdate = (
     processAndRelay();
   }, (error) => {
     console.error('Error listening to created tasks:', error);
-    if(callback) callback({ tasks: [], isLoading: false });
+    callback({ tasks: [], isLoading: false });
   });
 
   const qAssigned = query(tasksCollection, where('assignee_ids', 'array-contains', userId));
@@ -321,7 +359,7 @@ export const onTasksUpdate = (
     processAndRelay();
   }, (error) => {
     console.error('Error listening to assigned tasks:', error);
-    if(callback) callback({ tasks: [], isLoading: false });
+    callback({ tasks: [], isLoading: false });
   });
 
   return () => {
@@ -330,3 +368,4 @@ export const onTasksUpdate = (
     unsubscribeAssigned();
   };
 };
+
