@@ -1,7 +1,7 @@
 "use client";
 
 import type { PostgrestError } from "@supabase/supabase-js";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -52,17 +52,20 @@ export default function TaskDetailPage() {
     if (!task || !task.comments) {
       return [];
     }
-    // Ensure comments are always treated as an array and provide defaults for createdAt.
     return [...(Array.isArray(task.comments) ? task.comments : [])].sort((a, b) => {
         const dateA = a.createdAt ? parseISO(a.createdAt).getTime() : 0;
         const dateB = b.createdAt ? parseISO(b.createdAt).getTime() : 0;
-        return dateB - dateA; // Sort descending (newest first)
+        return dateB - dateA; 
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [task?.comments]); // Depend on task.comments for re-computation
+  }, [task?.comments]);
 
-  const fetchTaskDetails = async () => {
-    if (!taskId || !currentUser) return;
+  const fetchTaskDetails = useCallback(async () => {
+    if (!taskId || !currentUser?.id) { // Ensure currentUser.id is also checked
+        if(!taskId) setError("Task ID is missing.");
+        if(!currentUser?.id) setError("User not available for fetching task.");
+        setIsLoading(false);
+        return;
+    }
     setIsLoading(true);
     setError(null);
 
@@ -74,7 +77,20 @@ export default function TaskDetailPage() {
         .single();
 
       if (fetchError) {
-        throw fetchError;
+        console.error("Error fetching task from Supabase:", fetchError);
+        if (fetchError.code === 'PGRST116') { 
+          setError("Task not found.");
+          toast({
+            title: "Error",
+            description: "The requested task could not be found.",
+            variant: "destructive",
+          });
+          setIsLoading(false); 
+          router.replace('/tasks');
+          return; 
+        } else {
+          throw fetchError; 
+        }
       }
       
       if (taskDataFromDb) {
@@ -83,51 +99,34 @@ export default function TaskDetailPage() {
         setTask(processedTask);
         setSelectedStatus(processedTask.status === "Overdue" ? "To Do" : processedTask.status);
       } else {
-        throw { code: 'PGRST116', message: 'Task not found (no data returned).' };
+        throw { code: 'CUSTOM_NO_DATA', message: 'Task data not returned from database.' };
       }
     } catch (e: any) {
       let uiError = "Failed to load task details.";
       let toastMessage = "An unexpected error occurred. Please try again.";
       let errorTitle = "Error Loading Task";
       
-      if (typeof e === 'object' && e !== null && Object.keys(e).length === 0 && !(e as PostgrestError).message && !(e as PostgrestError).details) {
-        console.warn("fetchTaskDetails: An empty error object {} was caught initially. This could be due to network issues, RLS, or an unspecific error from Supabase. Detailed analysis follows.", e);
-      } else {
-        console.error("Full error object in fetchTaskDetails:", e); 
-      }
+      console.error("Full error object in fetchTaskDetails:", e); 
 
       const pgError = e as PostgrestError;
 
       if (e && typeof e === 'object') {
-        if (pgError.code === 'PGRST116') { 
+        if (pgError.code === 'PGRST116' || e.code === 'CUSTOM_NO_DATA') { 
           uiError = "Task not found.";
           toastMessage = "The requested task could not be found.";
-          if (typeof window !== "undefined" && !router.asPath.startsWith('/tasks')) {
-             router.replace('/tasks');
-          }
+          errorTitle = "Task Not Found";
         } else if (pgError.message || pgError.code) { 
           uiError = `Error: ${pgError.message || `Code ${pgError.code}`}`;
           toastMessage = pgError.message || `An error occurred (Code: ${pgError.code}).`;
           if (pgError.details) toastMessage += ` Details: ${pgError.details}`;
           if (pgError.hint) toastMessage += ` Hint: ${pgError.hint}`;
-           console.error(`fetchTaskDetails: PostgrestError. Code: ${pgError.code || 'N/A'}, Message: "${pgError.message || 'N/A'}", Details: "${pgError.details || 'N/A'}", Hint: "${pgError.hint || 'N/A'}"`);
-        } else if (Object.keys(e).length === 0 ) { 
-           uiError = "An empty error object was received while fetching task details.";
-           toastMessage = "An unexpected issue occurred. This might be a network problem or misconfiguration. Check console for details.";
-           console.error("fetchTaskDetails: Confirmed empty error object with no identifiable Postgrest properties. This is unusual and may indicate network issues, RLS problems, or Supabase client behavior that needs investigation.", e);
-        } else {
-          uiError = "An unexpected object-based error occurred.";
-          toastMessage = "An issue occurred while loading task details. Check console.";
-          console.error("fetchTaskDetails: Caught an unexpected object-type error that is not a typical PostgrestError and not empty:", e);
+        } else { // Covers empty error objects or other non-Postgrest object errors
+          uiError = "An unexpected error occurred while fetching task details.";
+          toastMessage = "Please check the console for more information or try again later.";
         }
       } else if (typeof e === 'string') {
         uiError = e;
         toastMessage = e;
-        console.error("fetchTaskDetails: Caught a string error:", e);
-      } else {
-        uiError = "An unknown error type was encountered.";
-        toastMessage = "An unexpected issue of unknown type occurred.";
-        console.error("fetchTaskDetails: Caught an error of unknown type:", e);
       }
 
       setError(uiError);
@@ -139,7 +138,7 @@ export default function TaskDetailPage() {
     } finally {
       setIsLoading(false); 
     }
-  };
+  }, [taskId, currentUser?.id, router, toast]); 
 
   useEffect(() => {
     if (authLoading) return;
@@ -153,39 +152,46 @@ export default function TaskDetailPage() {
       setError("Task ID is missing.");
       setIsLoading(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId, currentUser?.id, authLoading]); 
+  }, [taskId, currentUser, authLoading, router, fetchTaskDetails]);
 
 
   useEffect(() => {
-    if (taskId && realtimeTasks && realtimeTasks.length > 0) {
-      const contextTask = realtimeTasks.find(t => t.id === taskId);
-      if (contextTask) {
-        // If local task doesn't exist yet OR its updated_at is different from contextTask
-        // This implies that if updated_at has changed, the entire task object (including comments) should be refreshed.
-        if (!task || (task.updated_at !== contextTask.updated_at)) {
-          setTask(contextTask); // Update local task state from the context
+    if (!taskId) return;
 
-          // Also update selectedStatus if it has changed in the contextTask
-          if (contextTask.status !== selectedStatus && (contextTask.status !== "Overdue" || selectedStatus === "Overdue")) {
-            setSelectedStatus(contextTask.status === "Overdue" ? "To Do" : contextTask.status);
-          }
+    const contextTask = realtimeTasks.find(t => t.id === taskId);
+
+    if (contextTask) {
+      // If task found in realtime context
+      if (!task || (task.updated_at !== contextTask.updated_at)) {
+        setTask(contextTask);
+        const newStatus = contextTask.status === "Overdue" ? "To Do" : contextTask.status;
+        if (selectedStatus !== newStatus) {
+            setSelectedStatus(newStatus);
         }
       }
+      // If we were loading and found the task in context, stop loading and clear errors
+      if (isLoading) {
+        setIsLoading(false);
+        setError(null);
+      }
+    } else if (!isLoading && task?.id === taskId && !error) {
+      // Task was previously loaded but is no longer in realtimeTasks (e.g., deleted, access revoked)
+      // And we are not currently loading, and there's no existing error for this task
+      console.warn(`TaskDetailPage: Task ${taskId} disappeared from realtimeTasks or access potentially revoked.`);
+      setError("Task not found or access has changed. It might have been deleted.");
+      // Optionally, navigate away or show a more permanent "not found" state
+      // router.replace('/tasks'); 
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [realtimeTasks, taskId, task?.updated_at, selectedStatus]); // Depend on task.updated_at for re-evaluation
+  }, [realtimeTasks, taskId, task, isLoading, error, router, selectedStatus]);
 
 
   const handleAddComment = async () => {
     if (!newComment.trim() || !currentUser || !task) return;
     setIsSubmittingComment(true);
     try {
-      // apiUpdateTask will update the task in DB, which triggers realtime update via AuthContext
       await apiUpdateTask(task.id, {}, newComment.trim(), currentUser);
-      setNewComment(""); // Clear input after successful submission
+      setNewComment(""); 
       toast({ title: "Comment Added", description: "Your comment has been posted." });
-      // No explicit setTask(updatedTask) here; relying on realtime flow.
     } catch (e: any) {
       console.error("Error adding comment:", e);
       toast({ title: "Error", description: e.message || "Failed to add comment.", variant: "destructive" });
@@ -205,14 +211,11 @@ export default function TaskDetailPage() {
     setIsUpdatingStatus(true);
     try {
         const commentText = `Status changed from ${task.status} to ${newStatus}.`;
-        // apiUpdateTask will update the task in DB, which triggers realtime update
         await apiUpdateTask(task.id, { status: newStatus as Exclude<TaskStatus, "Overdue"> }, commentText, currentUser);
-        // setSelectedStatus(newStatus); // No longer needed, will be updated by realtime flow
         toast({ title: "Status Updated", description: `Task status changed to ${newStatus}.` });
     } catch (e: any) {
         console.error("Error updating status:", e);
         toast({ title: "Error", description: e.message || "Failed to update task status.", variant: "destructive" });
-        // Revert selectedStatus if update fails, relying on realtime to eventually correct or show current DB state
         setSelectedStatus(task.status === "Overdue" ? "To Do" : task.status); 
     } finally {
         setIsUpdatingStatus(false);
@@ -228,7 +231,7 @@ export default function TaskDetailPage() {
     try {
       await apiDeleteTask(task.id);
       toast({ title: "Task Deleted", description: `Task "${task.title}" has been deleted.` });
-      router.push('/tasks'); // Navigate away after deletion
+      router.push('/tasks'); 
     } catch (error: any) {
       toast({ title: "Error Deleting Task", description: error.message || "Could not delete task.", variant: "destructive" });
     } finally {
@@ -237,7 +240,7 @@ export default function TaskDetailPage() {
   };
 
 
-  if (isLoading || authLoading) {
+  if (isLoading || authLoading) { // Check authLoading as well
     return (
       <div className="flex h-full items-center justify-center p-4 sm:p-8">
         <Loader2 className="h-10 w-10 sm:h-12 sm:w-12 animate-spin text-primary" />
@@ -261,8 +264,13 @@ export default function TaskDetailPage() {
 
   if (!task) {
     return (
-      <div className="flex h-full items-center justify-center p-4 sm:p-8">
-        <p className="text-base sm:text-lg text-muted-foreground">Task data is unavailable or being redirected.</p>
+      <div className="container mx-auto py-8 text-center p-4 sm:p-8">
+        <AlertTriangle className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-muted-foreground mb-4" />
+        <h2 className="text-lg sm:text-xl font-semibold text-foreground mb-2">Task Not Found</h2>
+        <p className="text-sm sm:text-base text-muted-foreground">The task data could not be loaded. It might have been deleted or you may not have access.</p>
+        <Button onClick={() => router.push('/tasks')} className="mt-4">
+          Back to Tasks
+        </Button>
       </div>
     );
   }
@@ -308,7 +316,7 @@ export default function TaskDetailPage() {
                 {sortedComments.length > 0 ? sortedComments.map((comment, index) => (
                   <div key={index} className="flex items-start space-x-3">
                     <Avatar className="h-6 w-6 sm:h-8 sm:w-8 mt-1">
-                       <AvatarImage src={`https://avatar.vercel.sh/${comment.userId}.png`} alt={comment.userName} data-ai-hint="profile avatar" />
+                       <AvatarImage src={`https://avatar.vercel.sh/${comment.userId}.png?u=${comment.userId}`} alt={comment.userName} data-ai-hint="profile avatar" />
                        <AvatarFallback>{comment.userName ? comment.userName.charAt(0).toUpperCase() : "U"}</AvatarFallback>
                     </Avatar>
                     <div className="flex-1 bg-muted/50 p-2 sm:p-3 rounded-lg">
@@ -393,7 +401,7 @@ export default function TaskDetailPage() {
                 <h4 className="text-sm sm:text-md font-semibold mb-2 text-muted-foreground">Created By</h4>
                 <div className="flex items-center space-x-2">
                   <Avatar className="h-6 w-6 sm:h-8 sm:w-8">
-                     <AvatarImage src={task.created_by.avatar_url || `https://avatar.vercel.sh/${task.created_by.email || task.created_by.id}.png`} alt={task.created_by.name || "User"} data-ai-hint="profile avatar" />
+                     <AvatarImage src={task.created_by.avatar_url || `https://avatar.vercel.sh/${task.created_by.email || task.created_by.id}.png?u=${task.created_by_id}`} alt={task.created_by.name || "User"} data-ai-hint="profile avatar" />
                      <AvatarFallback>{task.created_by.name ? task.created_by.name.charAt(0).toUpperCase() : "U"}</AvatarFallback>
                   </Avatar>
                   <span className="text-xs sm:text-sm text-foreground">{task.created_by.name || "Unknown User"}</span>
@@ -411,7 +419,7 @@ export default function TaskDetailPage() {
                   {task.assignees.map(assignee => (
                     <div key={assignee.id} className="flex items-center space-x-2">
                       <Avatar className="h-6 w-6 sm:h-8 sm:w-8">
-                        <AvatarImage src={assignee.avatar_url || `https://avatar.vercel.sh/${assignee.email || assignee.id}.png`} alt={assignee.name || "User"} data-ai-hint="profile avatar"/>
+                        <AvatarImage src={assignee.avatar_url || `https://avatar.vercel.sh/${assignee.email || assignee.id}.png?u=${assignee.id}`} alt={assignee.name || "User"} data-ai-hint="profile avatar"/>
                         <AvatarFallback>{assignee.name ? assignee.name.charAt(0).toUpperCase() : "U"}</AvatarFallback>
                       </Avatar>
                       <span className="text-xs sm:text-sm text-foreground">{assignee.name || "Unknown User"}</span>
@@ -449,4 +457,3 @@ export default function TaskDetailPage() {
     </div>
   );
 }
-
