@@ -1,12 +1,13 @@
 
 "use client";
 
-import { useEffect, useState } from 'react';
+import type { PostgrestError } from '@supabase/supabase-js';
+import { useEffect, useState, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from '@/lib/supabaseClient';
-import type { Task, Profile, Comment, TaskStatus } from '@/lib/types'; // Using AppTask as Task
+import type { Task, Profile, Comment, TaskStatus } from '@/lib/types'; 
 import { TASK_EDITABLE_STATUSES } from '@/lib/constants';
 import { processTask, getAllProfilesMap, updateTask as apiUpdateTask, deleteTask as apiDeleteTask } from '@/lib/taskService'; 
 import { Loader2, AlertTriangle, CalendarDays, Users, Tag, MessageSquare, Send, Edit, Trash2, UserCircle } from 'lucide-react';
@@ -52,46 +53,85 @@ export default function TaskDetailPage() {
   const fetchTaskDetails = async () => {
     if (!taskId || !currentUser) return;
     setIsLoading(true);
+    setError(null); // Reset error state before fetching
+
     try {
       const { data: taskDataFromDb, error: fetchError } = await supabase
         .from('tasks')
         .select(`
           *,
-          created_by_id:profiles!tasks_created_by_id_fkey (
+          created_by_profile:profiles!tasks_created_by_id_fkey (
             id, name, email, avatar_url
           )
-        `) // Fetch created_by profile directly
+        `)
         .eq('id', taskId)
         .single();
 
-      if (fetchError) throw fetchError;
+      if (fetchError) {
+        // Throw the error to be caught by the catch block for centralized handling
+        throw fetchError;
+      }
       
       if (taskDataFromDb) {
-        const profilesMap = await getAllProfilesMap(); // Still needed for assignees
-        // Temporary cast for created_by_id if it's fetched as an object
-        const taskWithPotentialProfileObject = { ...taskDataFromDb, created_by_id: (taskDataFromDb.created_by_id as any)?.id || taskDataFromDb.created_by_id };
+        const profilesMap = await getAllProfilesMap();
+        // The created_by_profile is already fetched, ensure it's correctly mapped to created_by
+        // And the raw created_by_id is still the string ID.
+        const taskWithResolvedCreator = {
+          ...taskDataFromDb,
+          created_by_id: taskDataFromDb.created_by_id, // ensure this is the ID string
+          created_by: taskDataFromDb.created_by_profile as Profile || null 
+        };
+        
+        // Remove the temporary created_by_profile field if it exists, to match Task type
+        delete (taskWithResolvedCreator as any).created_by_profile;
 
-        const processedTask = await processTask(taskWithPotentialProfileObject as any, profilesMap);
-
+        const processedTask = await processTask(taskWithResolvedCreator as any, profilesMap); // processTask will handle assignees
         setTask(processedTask);
         setSelectedStatus(processedTask.status === 'Overdue' ? 'To Do' : processedTask.status); 
       } else {
-        setError("Task not found.");
-        toast({ title: "Error", description: "The requested task could not be found.", variant: "destructive" });
-        router.replace('/tasks');
+        // This case should ideally be caught by fetchError with PGRST116 if .single() finds no rows
+        throw { code: 'PGRST116', message: 'Task not found (no data returned).' };
       }
     } catch (e: any) {
-      console.error("Error fetching task details:", e);
-      if (e.code === 'PGRST116') { // Supabase code for "Resource not found"
-         setError("Task not found.");
-         toast({ title: "Error", description: "The requested task could not be found.", variant: "destructive" });
-         router.replace('/tasks');
-      } else {
-        setError("Failed to load task details.");
-        toast({ title: "Error", description: e.message || "Failed to load task details. Please try again.", variant: "destructive" });
+      setIsLoading(false); 
+      let uiError = "Failed to load task details.";
+      let toastMessage = "An unexpected error occurred. Please try again.";
+      let errorTitle = "Error Loading Task";
+
+      console.error("Full error object in fetchTaskDetails:", e); // Log the raw error `e`
+
+      if (e && typeof e === 'object') {
+        const pgError = e as PostgrestError;
+        if (pgError.code === 'PGRST116') { // Resource not found
+          uiError = "Task not found.";
+          toastMessage = "The requested task could not be found.";
+          if (!router.asPath.startsWith('/tasks')) router.replace('/tasks');
+        } else if (pgError.message) {
+          uiError = `Error: ${pgError.message}`;
+          toastMessage = pgError.message;
+          if (pgError.details) toastMessage += ` Details: ${pgError.details}`;
+          if (pgError.hint) toastMessage += ` Hint: ${pgError.hint}`;
+        } else if (Object.keys(e).length === 0) {
+           // Specifically handle if e is an empty object
+           uiError = "An empty error object was received while fetching task details.";
+           toastMessage = "An unexpected issue occurred. This might be a network problem or misconfiguration. Check console for details.";
+           console.error("fetchTaskDetails: Caught an empty error object {}. This is unusual and may indicate network issues, RLS problems, or Supabase client behavior that needs investigation.");
+        }
+      } else if (typeof e === 'string') {
+        uiError = e;
+        toastMessage = e;
       }
+
+      setError(uiError);
+      toast({
+        title: errorTitle,
+        description: toastMessage,
+        variant: "destructive",
+      });
     } finally {
-      setIsLoading(false);
+      // Ensure isLoading is false if it hasn't been set by the catch block already
+      // It's crucial this runs to prevent infinite loading state on errors.
+      if(isLoading) setIsLoading(false);
     }
   };
 
@@ -108,15 +148,17 @@ export default function TaskDetailPage() {
       setIsLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId, currentUser, authLoading, router]); 
+  }, [taskId, currentUser?.id, authLoading]); // Depend on currentUser.id for re-fetch if user changes
 
 
   useEffect(() => {
-    if (taskId && realtimeTasks && realtimeTasks.length > 0) {
+    if (taskId && realtimeTasks && realtimeTasks.length > 0 && task) {
       const contextTask = realtimeTasks.find(t => t.id === taskId);
       if (contextTask) {
-        // Check if task from context is different from current task state to avoid infinite loops
-        if (JSON.stringify(task) !== JSON.stringify(contextTask)) {
+        // Only update if there's a meaningful difference to avoid loops,
+        // e.g., based on updated_at or a deep comparison if necessary.
+        // For simplicity, a shallow check on updated_at.
+        if (task.updated_at !== contextTask.updated_at || task.status !== contextTask.status || JSON.stringify(task.comments) !== JSON.stringify(contextTask.comments)) {
             setTask(contextTask);
             if (contextTask.status !== selectedStatus && (contextTask.status !== 'Overdue' || selectedStatus === 'Overdue')) {
                 setSelectedStatus(contextTask.status === 'Overdue' ? 'To Do' : contextTask.status);
@@ -124,15 +166,17 @@ export default function TaskDetailPage() {
         }
       }
     }
-  }, [realtimeTasks, taskId, task, selectedStatus]); // Added task and selectedStatus to dependencies
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [realtimeTasks, taskId]);
 
 
   const handleAddComment = async () => {
     if (!newComment.trim() || !currentUser || !task) return;
     setIsSubmittingComment(true);
     try {
+      // The apiUpdateTask in taskService now handles fetching the full task with resolved profiles
       const updatedTask = await apiUpdateTask(task.id, {}, newComment.trim(), currentUser);
-      setTask(updatedTask); // Update with the full task from the service
+      // setTask(updatedTask); // AuthContext's realtimeTasks will update this from subscription
       setNewComment("");
       toast({ title: "Comment Added", description: "Your comment has been posted." });
     } catch (e: any) {
@@ -153,9 +197,11 @@ export default function TaskDetailPage() {
 
     setIsUpdatingStatus(true);
     try {
-        const updatedTask = await apiUpdateTask(task.id, { status: newStatus as Exclude<TaskStatus, "Overdue"> }, undefined, currentUser);
-        setTask(updatedTask);
-        setSelectedStatus(newStatus);
+        // apiUpdateTask handles creating a comment for status change and fetching updated task
+        const commentText = `Status changed from ${task.status} to ${newStatus}.`;
+        const updatedTask = await apiUpdateTask(task.id, { status: newStatus as Exclude<TaskStatus, "Overdue"> }, commentText, currentUser);
+        // setTask(updatedTask); // Realtime update handles this
+        setSelectedStatus(newStatus); // Optimistically update local UI for select
         toast({ title: "Status Updated", description: `Task status changed to ${newStatus}.` });
     } catch (e: any) {
         console.error("Error updating status:", e);
@@ -166,7 +212,7 @@ export default function TaskDetailPage() {
     }
   };
 
-  const handleDeleteTaskAction = async () => { // Renamed to avoid conflict
+  const handleDeleteTaskAction = async () => { 
     if (!task || !currentUser || currentUser.id !== task.created_by_id) {
       toast({ title: "Permission Denied", description: "Only the task creator can delete this task.", variant: "destructive" });
       setShowDeleteConfirm(false);
@@ -207,9 +253,12 @@ export default function TaskDetailPage() {
   }
 
   if (!task) {
+    // This might be hit if fetchTaskDetails completes without error but task is still null
+    // (e.g. if router.replace was called but component hasn't unmounted yet)
+    // Or if initial state for task is null and loading finishes before task is set.
     return (
       <div className="flex h-full items-center justify-center p-4 sm:p-8">
-        <p className="text-base sm:text-lg text-muted-foreground">Task data is unavailable.</p>
+        <p className="text-base sm:text-lg text-muted-foreground">Task data is unavailable or being redirected.</p>
       </div>
     );
   }
@@ -224,7 +273,9 @@ export default function TaskDetailPage() {
     High: "bg-red-500",
   };
   
-  const sortedComments = (task.comments || []).sort((a,b) => parseISO(b.createdAt).getTime() - parseISO(a.createdAt).getTime());
+  const sortedComments = useMemo(() => {
+    return (task.comments || []).sort((a,b) => parseISO(b.createdAt).getTime() - parseISO(a.createdAt).getTime());
+  }, [task.comments]);
 
   return (
     <div className="container mx-auto py-4 sm:py-8">
@@ -266,7 +317,7 @@ export default function TaskDetailPage() {
                           {comment.createdAt ? formatDistanceToNow(parseISO(comment.createdAt), { addSuffix: true }) : 'Recently'}
                         </p>
                       </div>
-                      <p className="text-xs sm:text-sm text-foreground/90 mt-1">{comment.text}</p>
+                      <p className="text-xs sm:text-sm text-foreground/90 mt-1 whitespace-pre-wrap break-words">{comment.text}</p>
                     </div>
                   </div>
                 )) : (
@@ -397,3 +448,4 @@ export default function TaskDetailPage() {
     </div>
   );
 }
+
