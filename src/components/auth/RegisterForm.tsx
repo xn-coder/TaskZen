@@ -1,4 +1,3 @@
-
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -27,9 +26,10 @@ const formSchema = z.object({
 });
 
 export function RegisterForm() {
-  const { register, isLoading } = useAuth();
+  const { register, isLoading: authOperationIsLoading } = useAuth(); // isLoading from AuthContext, renamed for clarity
   const [showPassword, setShowPassword] = useState(false);
   const { toast } = useToast();
+  const [isFormSubmitting, setIsFormSubmitting] = useState(false); // Local state for this form's submission
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -41,14 +41,14 @@ export function RegisterForm() {
   });
 
   async function onSubmit(values: z.infer<typeof formSchema>) {
-    setIsLoading(true); // Manually set loading state here
+    setIsFormSubmitting(true); // Use the local state setter
     try {
       await register(values.name, values.email, values.password);
        toast({
         title: "Registration Initiated",
         description: "Please check your email to confirm your account.",
       });
-      // Redirection to login is handled by AuthContext after successful registration.
+      // Redirection to login is handled by AuthContext.
     } catch (error: any) {
       toast({
         title: "Registration Failed",
@@ -56,13 +56,9 @@ export function RegisterForm() {
         variant: "destructive",
       });
     } finally {
-      setIsLoading(false); // Manually unset loading state here
+      setIsFormSubmitting(false); // Use the local state setter
     }
   }
-  
-  // Use a separate state for form submission loading, as useAuth().isLoading might be global
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
 
   return (
     <Form {...form}>
@@ -74,7 +70,7 @@ export function RegisterForm() {
             <FormItem>
               <FormLabel>Full Name</FormLabel>
               <FormControl>
-                <Input placeholder="John Doe" {...field} disabled={isLoading || isSubmitting} />
+                <Input placeholder="John Doe" {...field} disabled={authOperationIsLoading || isFormSubmitting} />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -87,7 +83,7 @@ export function RegisterForm() {
             <FormItem>
               <FormLabel>Email</FormLabel>
               <FormControl>
-                <Input placeholder="you@example.com" {...field} type="email" disabled={isLoading || isSubmitting}/>
+                <Input placeholder="you@example.com" {...field} type="email" disabled={authOperationIsLoading || isFormSubmitting}/>
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -101,7 +97,7 @@ export function RegisterForm() {
               <FormLabel>Password</FormLabel>
               <FormControl>
                  <div className="relative">
-                  <Input placeholder="••••••••" {...field} type={showPassword ? "text" : "password"} disabled={isLoading || isSubmitting} />
+                  <Input placeholder="••••••••" {...field} type={showPassword ? "text" : "password"} disabled={authOperationIsLoading || isFormSubmitting} />
                    <Button
                     type="button"
                     variant="ghost"
@@ -109,7 +105,7 @@ export function RegisterForm() {
                     className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
                     onClick={() => setShowPassword(!showPassword)}
                     aria-label={showPassword ? "Hide password" : "Show password"}
-                    disabled={isLoading || isSubmitting}
+                    disabled={authOperationIsLoading || isFormSubmitting}
                   >
                     {showPassword ? (
                       <EyeOff className="h-4 w-4" aria-hidden="true" />
@@ -123,8 +119,8 @@ export function RegisterForm() {
             </FormItem>
           )}
         />
-        <Button type="submit" className="w-full" disabled={isLoading || isSubmitting}>
-          {(isLoading || isSubmitting) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+        <Button type="submit" className="w-full" disabled={authOperationIsLoading || isFormSubmitting}>
+          {(authOperationIsLoading || isFormSubmitting) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
           Create Account
         </Button>
         <p className="text-center text-sm text-muted-foreground pt-2">
