@@ -27,10 +27,10 @@ export default function DashboardPage() {
 
   const handleEditTaskRedirect = (task: Task) => {
     if (user?.uid !== task.created_by_id) {
-      toast({ title: "Permission Denied", description: `Only the creator can edit task: ${task.title}. To edit tasks you created, go to the All Tasks page.`, variant: "destructive"});
+      toast({ title: "Permission Denied", description: `Only the creator can edit task: ${task.title}.`, variant: "destructive"});
       return;
     }
-    toast({ title: "Edit Action", description: `To edit '${task.title}', please go to the All Tasks page and find an edit button there.`});
+    router.push(`/tasks/${task.id}/edit`);
   };
 
   useEffect(() => {

@@ -125,9 +125,7 @@ export default function TasksPage() {
       toast({ title: "Permission Denied", description: `Only the creator can edit task: ${task.title}.`, variant: "destructive"});
       return;
     }
-    // Placeholder: Navigate to edit page or open edit modal
-    // router.push(`/tasks/${task.id}/edit`); // Example navigation
-    toast({ title: "Edit Action", description: `Editing task: ${task.title}. (Edit page/modal not implemented)`});
+    router.push(`/tasks/${task.id}/edit`);
   };
 
   const confirmDeleteTask = async () => {
