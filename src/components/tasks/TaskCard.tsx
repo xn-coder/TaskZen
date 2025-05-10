@@ -13,7 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { CalendarDays, Edit3, Trash2, UserCircle, AlertTriangle, CheckCircle2, Zap } from "lucide-react";
+import { CalendarDays, Edit3, Trash2, Users, AlertTriangle, CheckCircle2, Zap } from "lucide-react"; // Added Users icon
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 import {
@@ -46,12 +46,6 @@ const statusIcons: Record<Task["status"], React.ElementType> = {
 
 export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
   const StatusIcon = statusIcons[task.status] || Zap;
-
-  // Fallback for assignee/creator name if profile object isn't fully populated
-  const assigneeName = task.assignee?.name || "Unassigned";
-  const assigneeEmail = task.assignee?.email; // For Vercel avatar fallback
-  const assigneeIdForAvatar = task.assignee?.id; // Firebase UID
-  const assigneeAvatarUrl = task.assignee?.avatar_url;
 
   const creatorName = task.created_by?.name || "Unknown Creator";
   
@@ -96,26 +90,40 @@ export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
           </Badge>
         </div>
 
-        {task.assignee_id && ( // Check assignee_id to decide if this block should render
+        {task.assignees && task.assignees.length > 0 && (
           <div className="flex items-center text-sm text-muted-foreground">
-            <UserCircle className="mr-2 h-4 w-4" />
+            <Users className="mr-2 h-4 w-4" />
             <span>Assigned to:</span>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Avatar className="ml-2 h-6 w-6">
-                  <AvatarImage 
-                    src={assigneeAvatarUrl || `https://avatar.vercel.sh/${assigneeEmail || assigneeIdForAvatar}.png`} 
-                    alt={assigneeName} data-ai-hint="profile avatar"/>
-                  <AvatarFallback>{getAvatarFallback(assigneeName)}</AvatarFallback>
-                </Avatar>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{assigneeName}</p>
-              </TooltipContent>
-            </Tooltip>
+            <div className="ml-2 flex -space-x-2 overflow-hidden">
+              {task.assignees.slice(0, 3).map(assignee => (
+                <Tooltip key={assignee.id}>
+                  <TooltipTrigger asChild>
+                    <Avatar className="h-6 w-6 border-2 border-card hover:z-10">
+                      <AvatarImage 
+                        src={assignee.avatar_url || `https://avatar.vercel.sh/${assignee.email || assignee.id}.png`} 
+                        alt={assignee.name} data-ai-hint="profile avatar"/>
+                      <AvatarFallback>{getAvatarFallback(assignee.name)}</AvatarFallback>
+                    </Avatar>
+                  </TooltipTrigger>
+                  <TooltipContent><p>{assignee.name}</p></TooltipContent>
+                </Tooltip>
+              ))}
+              {task.assignees.length > 3 && (
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <Avatar className="h-6 w-6 border-2 border-card">
+                            <AvatarFallback>+{task.assignees.length - 3}</AvatarFallback>
+                        </Avatar>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                        <p>{task.assignees.slice(3).map(a => a.name).join(', ')}</p>
+                    </TooltipContent>
+                </Tooltip>
+              )}
+            </div>
           </div>
         )}
-         {task.created_by_id && ( // Check created_by_id
+         {task.created_by_id && ( 
           <div className="flex items-center text-xs text-muted-foreground/80 pt-1">
             <span>Created by: {creatorName}</span>
           </div>

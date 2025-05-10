@@ -19,10 +19,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Label } from "@/components/ui/label";
 import type { Task, Profile, TaskStatus, TaskPriority } from "@/lib/types";
 import { TASK_EDITABLE_STATUSES, TASK_PRIORITIES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
-import { CalendarIcon, Loader2 } from "lucide-react";
+import { CalendarIcon, Loader2, ChevronDown } from "lucide-react";
 import { format, parseISO, formatISO } from "date-fns";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRouter } from "next/navigation";
@@ -36,7 +39,7 @@ const taskFormSchema = z.object({
   due_date: z.date({ required_error: "Due date is required." }),
   priority: z.enum(TASK_PRIORITIES as [TaskPriority, ...TaskPriority[]]),
   status: z.enum(TASK_EDITABLE_STATUSES as [Exclude<TaskStatus, "Overdue">, ...Exclude<TaskStatus, "Overdue">[]]),
-  assignee_id: z.string().optional(),
+  assignee_ids: z.array(z.string()).optional().default([]), // Array of assignee IDs
 });
 
 type TaskFormValues = z.infer<typeof taskFormSchema>;
@@ -77,7 +80,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
       status: initialData?.status && TASK_EDITABLE_STATUSES.includes(initialData.status as Exclude<TaskStatus, "Overdue">) 
               ? initialData.status as Exclude<TaskStatus, "Overdue"> 
               : "To Do",
-      assignee_id: initialData?.assignee_id || undefined,
+      assignee_ids: initialData?.assignee_ids || [],
     },
   });
 
@@ -92,19 +95,22 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
       ...values,
       due_date: formatISO(values.due_date), 
       description: values.description || "",
-      assignee_id: values.assignee_id || null, 
+      assignee_ids: values.assignee_ids && values.assignee_ids.length > 0 ? values.assignee_ids : [], // Ensure it's an array, can be empty
     };
     
     try {
       let resultTask: Task;
       if (isEditing && initialData) {
-        resultTask = await updateTask(initialData.id, taskPayloadBase);
+        // Type assertion for updateTask payload is tricky because Omit doesn't play well with deep partials.
+        // We ensure all necessary fields are present from `taskPayloadBase`.
+        resultTask = await updateTask(initialData.id, taskPayloadBase as Partial<Omit<Task, 'id' | 'created_at' | 'updated_at' | 'assignees' | 'created_by'>>);
       } else {
         const fullPayloadForAdd = {
             ...taskPayloadBase,
-            created_by_id: authUser.uid, // Use Firebase auth user UID for created_by_id
+            created_by_id: authUser.uid, 
         };
-        resultTask = await addTask(fullPayloadForAdd as Omit<Task, 'id' | 'created_at' | 'updated_at' | 'status' | 'assignee' | 'created_by'> & { status: Exclude<TaskStatus, "Overdue"> } & { created_by_id: string });
+        // Type assertion for addTask. The service handles the structure.
+        resultTask = await addTask(fullPayloadForAdd as Omit<Task, 'id' | 'created_at' | 'updated_at' | 'status' | 'assignees' | 'created_by'> & { status: Exclude<TaskStatus, "Overdue"> } & { created_by_id: string });
       }
 
       toast({
@@ -243,25 +249,48 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
           />
           <FormField
             control={form.control}
-            name="assignee_id"
+            name="assignee_ids"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Assign To (Optional)</FormLabel>
-                <Select onValueChange={(value) => field.onChange(value === "unassigned" ? undefined : value)} value={field.value || "unassigned"}>
-                  <FormControl>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select assignee" />
-                    </SelectTrigger>
-                  </FormControl>
-                  <SelectContent>
-                    <SelectItem value="unassigned">Unassigned</SelectItem>
-                    {assigneeProfiles.map(profile => (
-                      <SelectItem key={profile.id} value={profile.id}>{profile.name} ({profile.email})</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <FormLabel>Assign To</FormLabel>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" className="w-full justify-start text-left font-normal">
+                      {field.value && field.value.length > 0
+                        ? `${field.value.length} user(s) selected`
+                        : "Select assignees"}
+                      <ChevronDown className="ml-auto h-4 w-4 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                    <ScrollArea className="h-48">
+                      <div className="p-2 space-y-1">
+                      {assigneeProfiles.length === 0 && <p className="text-sm text-muted-foreground p-2 text-center">No users available.</p>}
+                      {assigneeProfiles.map((profile) => (
+                        <div key={profile.id} className="flex items-center space-x-2 p-1.5 hover:bg-accent rounded-md">
+                          <Checkbox
+                            id={`assignee-${profile.id}`}
+                            checked={field.value?.includes(profile.id)}
+                            onCheckedChange={(checked) => {
+                              const currentIds = field.value || [];
+                              if (checked) {
+                                form.setValue("assignee_ids", [...currentIds, profile.id]);
+                              } else {
+                                form.setValue("assignee_ids", currentIds.filter(id => id !== profile.id));
+                              }
+                            }}
+                          />
+                          <Label htmlFor={`assignee-${profile.id}`} className="font-normal flex-1 cursor-pointer text-sm">
+                            {profile.name} <span className="text-xs text-muted-foreground">({profile.email})</span>
+                          </Label>
+                        </div>
+                      ))}
+                      </div>
+                    </ScrollArea>
+                  </PopoverContent>
+                </Popover>
                 <FormDescription>
-                  Choose a team member to assign this task to.
+                  Choose team members to assign this task to.
                 </FormDescription>
                 <FormMessage />
               </FormItem>
@@ -279,4 +308,3 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
     </Form>
   );
 }
-

@@ -30,7 +30,7 @@ export default function TasksPage() {
   const [isLoading, setIsLoading] = useState(true);
   const searchParams = useSearchParams();
   const router = useRouter();
-  const pathname = usePathname(); // Define pathname
+  const pathname = usePathname(); 
   const { toast } = useToast();
   const [taskToDelete, setTaskToDelete] = useState<string | null>(null);
 
@@ -40,9 +40,9 @@ export default function TasksPage() {
   });
 
   useEffect(() => {
-    if (!authLoading && user && user.uid) { // Ensure user and user.uid (Firebase) is loaded
+    if (!authLoading && user && user.uid) { 
       setIsLoading(true);
-      getTasks(user.uid) // Pass user.uid for Firebase to fetch tasks related to this user
+      getTasks(user.uid) 
         .then(fetchedTasks => {
           setTasks(fetchedTasks);
         })
@@ -61,43 +61,31 @@ export default function TasksPage() {
   const query = searchParams.get("query") || "";
   const initialFilterParam = searchParams.get("filter");
 
-  // This effect tries to apply initial filters from URL if user context is ready.
-  // Note: `tasks` state is updated by the main getTasks fetch. This effect *filters* the already fetched `tasks`.
-  // This might lead to a flicker if `getTasks` hasn't completed.
-  // A more robust approach might involve passing filter params directly to `getTasks` or using a separate fetching logic.
   useEffect(() => {
-    if (initialFilterParam && user?.uid && tasks.length > 0) { // Check tasks.length to avoid filtering empty array
-      let tempFilteredTasks = [...tasks]; // Work on a copy
-      if (initialFilterParam === "assigned") {
-        tempFilteredTasks = tempFilteredTasks.filter(t => t.assignee_id === user.uid);
-      } else if (initialFilterParam === "created") {
-        tempFilteredTasks = tempFilteredTasks.filter(t => t.created_by_id === user.uid);
-      } else if (initialFilterParam === "overdue") {
-         // For "overdue" filter from URL, we set the filter state, which will be applied by `filteredTasks` memo
+    if (initialFilterParam && user?.uid && tasks.length > 0) {
+      if (initialFilterParam === "overdue") {
          setFilters(prev => ({...prev, status: ['Overdue']}));
-         // We don't directly filter `tasks` here for "overdue" as `filteredTasks` handles it based on `filters` state
-         return; // Exit early as filter state change will trigger re-memoization
+         return; 
       }
-      // If specific filters like 'assigned' or 'created' were applied, update the main tasks state.
-      // This is a bit of a hack. Ideally, these filters are part of the `filteredTasks` memo logic or `getTasks` itself.
-      // setTasks(tempFilteredTasks); // This might be too aggressive and could interfere with other filters.
-                                  // For now, let's rely on filteredTasks memo.
+      // For 'assigned' or 'created', the filtering is now primarily handled by `filteredTasks` memo
+      // and the `getTasks` function itself which fetches relevant tasks based on userId.
+      // This effect ensures that if URL has `filter=assigned` or `filter=created`,
+      // those tasks are prioritized or shown. The `filteredTasks` memo will respect these.
     }
-  }, [initialFilterParam, user, tasks]); // Add tasks to dependency array
+  }, [initialFilterParam, user, tasks]); 
 
 
   const filteredTasks = useMemo(() => {
-    let tasksToFilter = [...tasks]; // Start with all fetched tasks
+    let tasksToFilter = [...tasks]; 
 
-    // Apply dashboard-linked pre-filter if present and user context is available
     if (user?.uid) {
         if (initialFilterParam === "assigned") {
-            tasksToFilter = tasksToFilter.filter(task => task.assignee_id === user.uid);
+            // Filter tasks where the current user is one of the assignees
+            tasksToFilter = tasksToFilter.filter(task => task.assignee_ids.includes(user.uid!));
         } else if (initialFilterParam === "created") {
             tasksToFilter = tasksToFilter.filter(task => task.created_by_id === user.uid);
         }
-        // "overdue" from initialFilterParam is handled by setting the `filters.status` state,
-        // which is then applied below.
+        // "overdue" is handled by status filter
     }
     
     return tasksToFilter
@@ -125,16 +113,14 @@ export default function TasksPage() {
 
   const clearFilters = useCallback(() => {
     setFilters({ status: [], priority: [] });
-    const params = new URLSearchParams(searchParams.toString()); // Use toString() for current params
-    params.delete("filter"); // Clear the "filter" param from URL
-    params.delete("query"); // Also clear search query if desired
-    router.replace(`${pathname}?${params.toString()}`); // Use pathname
+    const params = new URLSearchParams(searchParams.toString()); 
+    params.delete("filter"); 
+    params.delete("query"); 
+    router.replace(`${pathname}?${params.toString()}`); 
   }, [searchParams, router, pathname]);
 
 
   const handleEditTask = (task: Task) => {
-    // For Firebase, task.id is Firestore document ID
-    // router.push(`/tasks/edit/${task.id}`); // Uncomment when edit page is ready
     toast({ title: "Edit Action", description: `Editing task: ${task.title}. (Edit page not implemented)`});
   };
 
@@ -142,7 +128,7 @@ export default function TasksPage() {
     if (!taskToDelete) return;
     const taskTitle = tasks.find(t => t.id === taskToDelete)?.title || "Task";
     try {
-      await apiDeleteTask(taskToDelete); // taskToDelete is Firestore document ID
+      await apiDeleteTask(taskToDelete); 
       setTasks(prevTasks => prevTasks.filter(t => t.id !== taskToDelete));
       toast({ title: "Task Deleted", description: `"${taskTitle}" has been deleted.` });
     } catch (error: any) {
@@ -231,4 +217,3 @@ export default function TasksPage() {
     </div>
   );
 }
-

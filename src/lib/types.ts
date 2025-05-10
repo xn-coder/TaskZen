@@ -16,10 +16,11 @@ export interface Task {
   due_date: string; // ISO string (converted from/to Firebase Timestamp)
   priority: TaskPriority;
   status: TaskStatus; // "Overdue" is client-calculated. Firestore stores "To Do", "In Progress", "Done"
-  assignee_id?: string | null; // Firebase UID, FK to profiles.id (conceptually)
-  assignee?: Profile | null; 
+  assignee_ids: string[]; // Array of Firebase UIDs, FK to profiles.id (conceptually)
+  assignees: Profile[] | null; 
   created_by_id: string; // Firebase UID, FK to profiles.id (conceptually)
   created_by?: Profile; 
   created_at: string; // ISO string (converted from Firebase Timestamp)
   updated_at: string; // ISO string (converted from Firebase Timestamp)
 }
+
