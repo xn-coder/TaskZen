@@ -1,11 +1,13 @@
+
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo } from 'react'; // Removed useState
 import type { Task } from '@/lib/types';
 import { useAuth } from '@/contexts/AuthContext';
-import { getDashboardTasks } from '@/lib/taskService';
+// getDashboardTasks might be removed if dashboard fully relies on realtimeTasks
+// import { getDashboardTasks } from '@/lib/taskService'; 
 import { TaskCard } from '@/components/tasks/TaskCard';
-import { Loader2, ListChecks, UserPlus, AlertOctagon, CheckSquare, AlertTriangle, Users } from 'lucide-react'; // Added Users
+import { Loader2, ListChecks, UserPlus, AlertOctagon, CheckSquare, AlertTriangle, Users } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
@@ -14,69 +16,39 @@ import { useToast } from "@/hooks/use-toast";
 
 
 export default function DashboardPage() {
-  const { user, isInitialLoading: authLoading } = useAuth();
-  const [dashboardTasks, setDashboardTasks] = useState<{ assignedTasks: Task[], createdTasks: Task[], overdueTasks: Task[] }>({
-    assignedTasks: [],
-    createdTasks: [],
-    overdueTasks: [],
-  });
-  const [isFetchingTasks, setIsFetchingTasks] = useState(true);
+  const { user, isInitialLoading: authLoading, realtimeTasks, areRealtimeTasksLoading } = useAuth();
   const router = useRouter();
   const { toast } = useToast();
 
   const handleEditTaskRedirect = (task: Task) => {
-    // Creator check removed. Non-creators can access edit page to update status.
-    // Field-level permissions are handled in TaskForm and Firestore rules.
     router.push(`/tasks/${task.id}/edit`);
   };
 
-  useEffect(() => {
-    if (authLoading) {
-      setIsFetchingTasks(true); // Keep fetching tasks true while auth is loading
-      return;
-    }
-
-    if (!user) {
-      setIsFetchingTasks(false);
-      router.replace('/login'); 
-      return;
-    }
-    
-    if (!user.profile) {
-      // Profile might still be loading or failed to load, wait for it or handle appropriately.
-      // For now, let's assume if user object is there but no profile, it might be an issue.
-      // However, critical operations depend on user.uid which is available.
-      // If profile is strictly needed for getDashboardTasks, this needs refinement.
-      // Assuming getDashboardTasks primarily uses user.uid.
-      console.warn("Dashboard: User profile is not loaded. Proceeding with user.uid.");
-      // setIsFetchingTasks(false); // Optionally, handle if profile is absolutely necessary before fetch
-      // return;
-    }
-
-    setIsFetchingTasks(true);
-    getDashboardTasks(user.uid) 
-      .then(data => {
-        setDashboardTasks(data);
-      })
-      .catch(error => {
-        console.error("Failed to load dashboard tasks:", error);
-        toast({ title: "Error", description: "Could not load dashboard tasks.", variant: "destructive" });
-      })
-      .finally(() => {
-        setIsFetchingTasks(false);
-      });
-
-  }, [user, authLoading, router, toast]);
-
+  // No useEffect needed here for fetching tasks, as they come from AuthContext
 
   const handleDeleteTaskPlaceholder = (taskId: string) => {
-     // Actual delete permission is checked on TaskCard and via Firestore rules.
-     // This placeholder might be for a different context if needed.
-     // For now, direct deletion attempt from here is not the primary path.
      toast({ title: "Delete Action", description: `To delete tasks, please go to the All Tasks page.`});
   };
+  
+  const dashboardData = useMemo(() => {
+    if (!user || !user.uid || !realtimeTasks) return { assignedTasks: [], createdTasks: [], overdueTasks: [] };
+    
+    const assignedToUser = realtimeTasks.filter(
+      task => task.assignee_ids.includes(user.uid) && task.status !== 'Done' && task.status !== 'Overdue'
+    );
+    const createdByUser = realtimeTasks.filter(
+      task => task.created_by_id === user.uid && task.status !== 'Done' && task.status !== 'Overdue'
+    );
+    const overdue = realtimeTasks.filter(task => task.status === 'Overdue');
+    
+    // Ensure overdue tasks shown in the "Overdue" section are not also in "Assigned" or "Created" sections
+    // to avoid duplication if an active task becomes overdue.
+    // The current filtering logic (status !== 'Overdue') for assigned/created handles this.
+    return { assignedTasks: assignedToUser, createdTasks: createdByUser, overdueTasks: overdue };
+  }, [realtimeTasks, user]);
 
-  if (authLoading || (!user && !authLoading) /* covers initial redirect state before user obj is nullified by context */) {
+
+  if (authLoading || (!user && !authLoading)) {
     return (
       <div className="flex h-full items-center justify-center">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -85,7 +57,6 @@ export default function DashboardPage() {
     );
   }
   
-  // After authLoading is false, if user is still null, it means redirection to login should happen or user is logged out
   if (!user && !authLoading) {
      if (typeof window !== "undefined") router.replace('/login');
      return (
@@ -102,10 +73,7 @@ export default function DashboardPage() {
     );
   }
   
-  // User object exists, but profile might be missing
   if (user && !user.profile && !authLoading) {
-    // This specific check might need re-evaluation based on how critical profile is versus user.uid
-    // For now, keep it as it might indicate an incomplete user setup state.
     return (
        <div className="flex h-full flex-col items-center justify-center text-center p-6">
         <AlertTriangle className="h-16 w-16 text-destructive mb-4" />
@@ -121,7 +89,6 @@ export default function DashboardPage() {
             try {
               await useAuth().logout(); 
             } catch (e) { console.error(e); }
-            // router.push('/login'); // Logout itself should redirect via AuthContext
           }} variant="default">
             Logout and Login Again
           </Button>
@@ -130,7 +97,8 @@ export default function DashboardPage() {
     );
   }
   
-  if (isFetchingTasks && user) { // Only show task loading if user is present
+  // This combines auth loading and task loading for the dashboard view
+  if (user && areRealtimeTasksLoading && !authLoading) { 
      return (
       <div className="flex h-full items-center justify-center">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -139,8 +107,7 @@ export default function DashboardPage() {
     );
   }
 
-  // Fallback if somehow no user but not caught above (should be rare)
-  if (!user) {
+  if (!user) { // Fallback if user becomes null after initial checks (e.g. during logout race condition)
     return (
       <div className="flex h-full items-center justify-center">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -148,7 +115,6 @@ export default function DashboardPage() {
       </div>
     );
   }
-
 
   const renderTaskSection = (title: string, tasksToDisplay: Task[], IconComponent: React.ElementType, emptyMessage: string, EmptyIconComponent?: React.ElementType, viewAllLink?: string) => (
     <section className="mb-8">
@@ -171,8 +137,8 @@ export default function DashboardPage() {
             <TaskCard
               key={task.id}
               task={task}
-              onEdit={() => handleEditTaskRedirect(task)} // Use updated redirect handler
-              onDelete={handleDeleteTaskPlaceholder} // This is a placeholder, actual delete is on All Tasks page
+              onEdit={() => handleEditTaskRedirect(task)}
+              onDelete={handleDeleteTaskPlaceholder} 
             />
           ))}
         </div>
@@ -196,11 +162,10 @@ export default function DashboardPage() {
         <p className="text-muted-foreground">Here&apos;s a summary of your tasks.</p>
       </div>
 
-      {renderTaskSection("Tasks Assigned to You", dashboardTasks.assignedTasks, Users, "No active tasks currently assigned to you. Great job!", CheckSquare, "/tasks?filter=assigned")}
-      {renderTaskSection("Tasks You Created", dashboardTasks.createdTasks, UserPlus, "You haven't created any active tasks yet.", CheckSquare, "/tasks?filter=created")}
-      {renderTaskSection("Overdue Tasks", dashboardTasks.overdueTasks, AlertOctagon, "No overdue tasks. Keep it up!", CheckSquare, "/tasks?filter=overdue")}
+      {renderTaskSection("Tasks Assigned to You", dashboardData.assignedTasks, Users, "No active tasks currently assigned to you. Great job!", CheckSquare, "/tasks?filter=assigned")}
+      {renderTaskSection("Tasks You Created", dashboardData.createdTasks, UserPlus, "You haven't created any active tasks yet.", CheckSquare, "/tasks?filter=created")}
+      {renderTaskSection("Overdue Tasks", dashboardData.overdueTasks, AlertOctagon, "No overdue tasks. Keep it up!", CheckSquare, "/tasks?filter=overdue")}
 
     </div>
   );
 }
-

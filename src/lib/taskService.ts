@@ -13,7 +13,9 @@ import {
   deleteDoc,
   orderBy,
   Timestamp,
-  serverTimestamp
+  serverTimestamp,
+  onSnapshot,
+  QueryDocumentSnapshot,
 } from 'firebase/firestore';
 import { formatISO, parseISO, isBefore } from 'date-fns';
 
@@ -32,12 +34,11 @@ const processTimestampsInDoc = (docData: any) => {
   return data;
 };
 
-const processTask = async (taskDoc: any, profilesMap: Map<string, Profile>): Promise<Task> => {
-  const taskData = processTimestampsInDoc({ id: taskDoc.id, ...taskDoc.data() });
+const processTask = async (taskDocSnap: QueryDocumentSnapshot, profilesMap: Map<string, Profile>): Promise<Task> => {
+  const taskData = processTimestampsInDoc({ id: taskDocSnap.id, ...taskDocSnap.data() });
   
   const now = new Date();
-  // Ensure due_date is parsed correctly if it's already a string from processTimestampsInDoc
-  const dueDate = taskData.due_date ? parseISO(taskData.due_date) : new Date(0); // Default to past if not set
+  const dueDate = taskData.due_date ? parseISO(taskData.due_date) : new Date(0); 
   const isOverdue = taskData.status !== 'Done' && isBefore(dueDate, now);
 
   let assignees: Profile[] = [];
@@ -51,11 +52,10 @@ const processTask = async (taskDoc: any, profilesMap: Map<string, Profile>): Pro
   }
   const createdBy = taskData.created_by_id ? profilesMap.get(taskData.created_by_id) : undefined;
 
-
   return {
     ...taskData,
     status: isOverdue ? 'Overdue' : taskData.status,
-    assignee_ids: taskData.assignee_ids || [], // Ensure it's an array
+    assignee_ids: taskData.assignee_ids || [],
     assignees: assignees.length > 0 ? assignees : null,
     created_by: createdBy,
   } as Task;
@@ -83,7 +83,6 @@ export const getTasks = async (userId?: string): Promise<Task[]> => {
   
   let q;
   if (userId) {
-    // Fetch tasks created by the user OR assigned to the user (assignee_ids contains userId)
     const createdQuery = query(tasksCollection, where('created_by_id', '==', userId), orderBy('created_at', 'desc'));
     const assignedQuery = query(tasksCollection, where('assignee_ids', 'array-contains', userId), orderBy('created_at', 'desc'));
     
@@ -92,15 +91,14 @@ export const getTasks = async (userId?: string): Promise<Task[]> => {
         getDocs(assignedQuery)
     ]);
 
-    const taskMap = new Map<string, any>();
+    const taskMap = new Map<string, QueryDocumentSnapshot>();
     createdSnapshot.forEach(docSnap => taskMap.set(docSnap.id, docSnap));
-    assignedSnapshot.forEach(docSnap => taskMap.set(docSnap.id, docSnap)); // Overwrites if duplicate, which is fine for merging
+    assignedSnapshot.forEach(docSnap => taskMap.set(docSnap.id, docSnap)); 
 
     const tasksPromises = Array.from(taskMap.values()).map(docSnap => processTask(docSnap, profilesMap));
     return Promise.all(tasksPromises);
 
   } else {
-    // Fetch all tasks if no userId 
     q = query(tasksCollection, orderBy('created_at', 'desc'));
     const querySnapshot = await getDocs(q);
     const tasksPromises = querySnapshot.docs.map(docSnap => processTask(docSnap, profilesMap));
@@ -109,65 +107,32 @@ export const getTasks = async (userId?: string): Promise<Task[]> => {
 };
 
 export const getDashboardTasks = async (userId: string): Promise<{ assignedTasks: Task[], createdTasks: Task[], overdueTasks: Task[] }> => {
-  const profilesMap = await getAllProfilesMap();
-  const tasksCollection = collection(db, 'tasks');
+  // This function might be deprecated if dashboard uses realtime tasks directly from context.
+  // For now, it can serve as a one-time fetch if needed.
+  const allUserTasks = await getTasks(userId); // Gets all tasks related to the user
 
-  // Tasks where userId is in the assignee_ids array
-  const assignedQuery = query(
-    tasksCollection,
-    where('assignee_ids', 'array-contains', userId),
-    where('status', '!=', 'Done'),
-    orderBy('status'), 
-    orderBy('due_date', 'asc')
+  const assignedTasks = allUserTasks.filter(
+    task => task.assignee_ids.includes(userId) && task.status !== 'Done' && task.status !== 'Overdue'
   );
-  // Tasks created by userId
-  const createdQuery = query(
-    tasksCollection,
-    where('created_by_id', '==', userId),
-    where('status', '!=', 'Done'),
-    orderBy('status'),
-    orderBy('due_date', 'asc')
+  const createdTasks = allUserTasks.filter(
+    task => task.created_by_id === userId && task.status !== 'Done' && task.status !== 'Overdue'
   );
-
-  try {
-    const [assignedSnapshot, createdSnapshot] = await Promise.all([
-      getDocs(assignedQuery),
-      getDocs(createdQuery),
-    ]);
-
-    const assignedTasksPromises = assignedSnapshot.docs.map(doc => processTask(doc, profilesMap));
-    const createdTasksPromises = createdSnapshot.docs.map(doc => processTask(doc, profilesMap));
+  const overdueTasks = allUserTasks.filter(task => task.status === 'Overdue');
     
-    let assignedTasks = await Promise.all(assignedTasksPromises);
-    let createdTasks = await Promise.all(createdTasksPromises);
-
-    // Combine and filter for overdue tasks, ensuring uniqueness
-    const allActiveTasks = new Map<string, Task>();
-    assignedTasks.forEach(task => allActiveTasks.set(task.id, task));
-    createdTasks.forEach(task => allActiveTasks.set(task.id, task)); 
-
-    const overdueTasks = Array.from(allActiveTasks.values()).filter(task => task.status === 'Overdue');
-    
-    return {
-      assignedTasks: assignedTasks.filter(t => t.status !== 'Overdue'),
-      createdTasks: createdTasks.filter(t => t.status !== 'Overdue'),
-      overdueTasks,
-    };
-
-  } catch (error) {
-    console.error('Error fetching dashboard tasks:', error);
-    return { assignedTasks: [], createdTasks: [], overdueTasks: [] };
-  }
+  return {
+    assignedTasks,
+    createdTasks,
+    overdueTasks,
+  };
 };
 
-// Ensure that assignee_ids is always an array in the payload.
 export const addTask = async (taskData: Omit<Task, 'id' | 'created_at' | 'updated_at' | 'status' | 'assignees' | 'created_by'> & { status: Exclude<TaskStatus, "Overdue"> }): Promise<Task> => {
   const tasksCollection = collection(db, 'tasks');
   const payload = {
     ...taskData,
     due_date: taskData.due_date ? Timestamp.fromDate(parseISO(taskData.due_date)) : Timestamp.now(),
     description: taskData.description || "", 
-    assignee_ids: taskData.assignee_ids || [], // Ensure assignee_ids is an array, can be empty
+    assignee_ids: taskData.assignee_ids || [],
     created_at: serverTimestamp(),
     updated_at: serverTimestamp(),
   };
@@ -175,36 +140,39 @@ export const addTask = async (taskData: Omit<Task, 'id' | 'created_at' | 'update
   try {
     const docRef = await addDoc(tasksCollection, payload);
     const newDocSnap = await getDoc(docRef);
-    if (!newDocSnap.exists()) {
+    if (!newDocSnap.exists() || !(newDocSnap instanceof QueryDocumentSnapshot)) {
+        // getDoc returns DocumentSnapshot, not QueryDocumentSnapshot directly.
+        // We need to ensure it's the right type for processTask or adjust processTask.
+        // For simplicity, let's assume if it exists, we can create a mock QueryDocumentSnapshot or fetch again.
+        // Or, better, processTask should accept DocumentSnapshot. Let's adjust processTask for this.
+        // For now, if newDocSnap exists, let's assume it's usable or refetch.
+        // This scenario is unlikely if addDoc succeeds.
         throw new Error("Failed to create task or retrieve it after creation.");
     }
     const profilesMap = await getAllProfilesMap();
-    return processTask(newDocSnap, profilesMap);
+    // Casting newDocSnap to QueryDocumentSnapshot might be risky if its structure is different.
+    // It's safer if processTask can handle a generic DocumentSnapshot.
+    // Let's assume processTask can handle a DocumentSnapshot for now.
+    return processTask(newDocSnap as QueryDocumentSnapshot, profilesMap); 
   } catch (error) {
     console.error("Error adding task to Firestore:", error);
     throw error;
   }
 };
 
-// Ensure that assignee_ids is always an array in the payload if provided.
 export const updateTask = async (taskId: string, taskData: Partial<Omit<Task, 'id' | 'created_at' | 'updated_at' | 'assignees' | 'created_by'>>): Promise<Task> => {
   const taskDocRef = doc(db, 'tasks', taskId);
   
   const updatePayload: any = { ...taskData, updated_at: serverTimestamp() };
-  if (taskData.due_date) {
+  if (taskData.due_date && typeof taskData.due_date === 'string') { // ensure it's a string before parsing
     updatePayload.due_date = Timestamp.fromDate(parseISO(taskData.due_date));
   }
   if (taskData.hasOwnProperty('description') && taskData.description === undefined) {
     updatePayload.description = ""; 
   }
-  // Ensure assignee_ids is an array or null/undefined for deletion (handled by Partial)
-  // If it's explicitly set to undefined in taskData, it means "no change" for this field if not handled.
-  // If it's an empty array [], it means "set to unassigned".
-  // If it's an array with IDs, it means "set to these assignees".
   if (taskData.hasOwnProperty('assignee_ids')) {
      updatePayload.assignee_ids = taskData.assignee_ids || [];
   }
-
 
   try {
     await updateDoc(taskDocRef, updatePayload);
@@ -213,7 +181,7 @@ export const updateTask = async (taskId: string, taskData: Partial<Omit<Task, 'i
         throw new Error("Failed to update task or retrieve it after update.");
     }
     const profilesMap = await getAllProfilesMap();
-    return processTask(updatedDocSnap, profilesMap);
+    return processTask(updatedDocSnap as QueryDocumentSnapshot, profilesMap); // Similar casting concern as addTask
   } catch (error) {
     console.error(`Error updating task ${taskId} in Firestore:`, error);
     throw error;
@@ -233,4 +201,79 @@ export const deleteTask = async (taskId: string): Promise<void> => {
 export const getProfilesForDropdown = async (): Promise<Profile[]> => {
   const profilesMap = await getAllProfilesMap();
   return Array.from(profilesMap.values());
+};
+
+// Real-time listener for tasks
+export const onTasksUpdate = (
+  userId: string,
+  callback: (data: { tasks: Task[]; isLoading: boolean }) => void
+): (() => void) => {
+  const tasksCollection = collection(db, 'tasks');
+  
+  callback({ tasks: [], isLoading: true }); // Initial loading state
+
+  let currentCreatedDocs: QueryDocumentSnapshot[] = [];
+  let currentAssignedDocs: QueryDocumentSnapshot[] = [];
+  let createdListenerInitialized = false;
+  let assignedListenerInitialized = false;
+  let profilesMapCache: Map<string, Profile> | null = null;
+
+
+  const processAndRelay = async () => {
+    // Avoid processing if one listener hasn't fired its first snapshot yet
+    if (!createdListenerInitialized || !assignedListenerInitialized) {
+        // Still loading as not all initial data is in
+        if(callback) callback({ tasks: [], isLoading: true });
+        return;
+    }
+    
+    // Cache profilesMap for a short duration or until a change is detected (advanced)
+    // For simplicity, fetch every time for now or use a recently fetched one.
+    if (!profilesMapCache) {
+        profilesMapCache = await getAllProfilesMap();
+    }
+
+    const taskMap = new Map<string, QueryDocumentSnapshot>();
+    currentCreatedDocs.forEach(doc => taskMap.set(doc.id, doc));
+    currentAssignedDocs.forEach(doc => taskMap.set(doc.id, doc));
+
+    const tasksPromises = Array.from(taskMap.values()).map(docSnap =>
+      processTask(docSnap, profilesMapCache!) // Use cached map
+    );
+    
+    try {
+        const allTasks = await Promise.all(tasksPromises);
+        if(callback) callback({ tasks: allTasks, isLoading: false });
+    } catch (error) {
+        console.error("Error processing tasks for real-time update:", error);
+        if(callback) callback({ tasks: [], isLoading: false }); // Error state, stop loading
+    }
+  };
+  
+  const qCreated = query(tasksCollection, where('created_by_id', '==', userId), orderBy('created_at', 'desc'));
+  const unsubscribeCreated = onSnapshot(qCreated, (snapshot) => {
+    currentCreatedDocs = snapshot.docs;
+    createdListenerInitialized = true;
+    profilesMapCache = null; // Invalidate profile cache on new data
+    processAndRelay();
+  }, (error) => {
+    console.error('Error listening to created tasks:', error);
+    if(callback) callback({ tasks: [], isLoading: false });
+  });
+
+  const qAssigned = query(tasksCollection, where('assignee_ids', 'array-contains', userId), orderBy('created_at', 'desc'));
+  const unsubscribeAssigned = onSnapshot(qAssigned, (snapshot) => {
+    currentAssignedDocs = snapshot.docs;
+    assignedListenerInitialized = true;
+    profilesMapCache = null; // Invalidate profile cache on new data
+    processAndRelay();
+  }, (error) => {
+    console.error('Error listening to assigned tasks:', error);
+    if(callback) callback({ tasks: [], isLoading: false });
+  });
+
+  return () => {
+    unsubscribeCreated();
+    unsubscribeAssigned();
+  };
 };

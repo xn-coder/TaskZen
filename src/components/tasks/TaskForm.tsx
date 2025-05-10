@@ -1,3 +1,4 @@
+
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -47,7 +48,7 @@ interface TaskFormProps {
   initialData?: Task | null;
   onSubmitSuccess?: (task: Task) => void;
   isEditing?: boolean;
-  isCreator?: boolean; // New prop
+  isCreator?: boolean;
 }
 
 export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = false, isCreator = true }: TaskFormProps) {
@@ -97,11 +98,6 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
     }
     setIsSubmitting(true);
 
-    // Firestore rules will enforce that non-creators can only update status.
-    // The form fields are disabled in the UI for non-creators, but react-hook-form
-    // will still submit their initial (unchanged) values.
-    // Firestore's `request.resource.data.diff(resource.data).affectedKeys()` will correctly
-    // identify that only 'status' (and 'updated_at') changed if a non-creator submits.
     const taskPayloadBase = {
       ...values,
       due_date: formatISO(values.due_date), 
@@ -112,8 +108,6 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
     try {
       let resultTask: Task;
       if (isEditing && initialData) {
-        // For updates, ensure we only send fields that were actually editable or changed by the user.
-        // Firestore rules are the ultimate enforcer.
         let payloadForUpdate: Partial<Omit<Task, 'id' | 'created_at' | 'updated_at' | 'assignees' | 'created_by'>> = {
             title: values.title,
             description: values.description || "",
@@ -124,9 +118,6 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
         };
 
         if (!isCreator) {
-            // If not the creator, only allow status to be part of the payload for update.
-            // Other fields were disabled, so their values from the form should match initialData.
-            // Sending only status minimizes risk if Firestore rules were misconfigured.
             payloadForUpdate = {
                 status: values.status,
             };
@@ -135,7 +126,6 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
         resultTask = await updateTask(initialData.id, payloadForUpdate);
 
       } else {
-        // Creating a new task
         const fullPayloadForAdd = {
             ...taskPayloadBase,
             created_by_id: authUser.uid, 
@@ -152,7 +142,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
         onSubmitSuccess(resultTask);
       } else {
         router.push('/tasks'); 
-        router.refresh(); 
+        // router.refresh(); // Removed as real-time updates should handle list updates
       }
     } catch (error: any) {
       console.error("Failed to save task:", error);
@@ -264,7 +254,6 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Status</FormLabel>
-                {/* Status field is always enabled for editing tasks if user has access */}
                 <Select onValueChange={field.onChange} defaultValue={field.value} disabled={isSubmitting}>
                   <FormControl>
                     <SelectTrigger>
@@ -343,4 +332,3 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
     </Form>
   );
 }
-

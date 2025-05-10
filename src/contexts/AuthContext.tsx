@@ -2,16 +2,18 @@
 "use client";
 
 import type { AppUser } from '@/lib/auth'; 
-import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from 'react';
 import {
   getCurrentUser as apiGetCurrentUser,
   login as apiLogin,
   register as apiRegister,
   logout as apiLogout,
-  onAuthStateChangeCallback // Use the renamed callback
+  onAuthStateChangeCallback
 } from '@/lib/auth';
 import { useRouter, usePathname } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
+import type { Task } from '@/lib/types';
+import { onTasksUpdate } from '@/lib/taskService';
 
 interface AuthContextType {
   user: AppUser | null;
@@ -19,7 +21,9 @@ interface AuthContextType {
   register: (name: string, email: string, pass: string) => Promise<AppUser | void>;
   logout: () => Promise<void>;
   isLoading: boolean; 
-  isInitialLoading: boolean; 
+  isInitialLoading: boolean;
+  realtimeTasks: Task[];
+  areRealtimeTasksLoading: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -30,14 +34,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isInitialLoading, setIsInitialLoading] = useState(true); 
   const router = useRouter();
 
+  const [realtimeTasks, setRealtimeTasks] = useState<Task[]>([]);
+  const [areRealtimeTasksLoading, setAreRealtimeTasksLoading] = useState(true);
+  const tasksUnsubscribeRef = useRef<(() => void) | null>(null);
+
+
   useEffect(() => {
     let didUnsubscribe = false;
 
-    setIsInitialLoading(true);
+    // Initial check for user persistence
     apiGetCurrentUser()
       .then(currentUser => {
         if (!didUnsubscribe) {
-          setUser(currentUser);
+          // This initial setUser might be overwritten by onAuthStateChangeCallback,
+          // but it's good for the very first load if the user is already logged in.
+          // The onAuthStateChangeCallback will handle profile fetching and task listeners.
+          // setUser(currentUser); // Potentially defer this to onAuthStateChangeCallback entirely
         }
       })
       .catch(error => {
@@ -47,16 +59,36 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
       })
       .finally(() => {
-        if (!didUnsubscribe) {
-          setIsInitialLoading(false);
-        }
+        // isInitialLoading will be set to false by onAuthStateChangeCallback's first fire
       });
-
-    const unsubscribeAuthState = onAuthStateChangeCallback((appUser) => { // Use the renamed callback
+    
+    const unsubscribeAuthState = onAuthStateChangeCallback((appUser) => {
       if (!didUnsubscribe) {
         setUser(appUser);
-        if (isInitialLoading) {
+        if (isInitialLoading) { // Only set this once
             setIsInitialLoading(false);
+        }
+
+        if (tasksUnsubscribeRef.current) {
+          tasksUnsubscribeRef.current();
+          tasksUnsubscribeRef.current = null;
+        }
+        
+        setRealtimeTasks([]); // Clear tasks on auth state change
+
+        if (appUser && appUser.uid) {
+          // setAreRealtimeTasksLoading(true); // Handled by onTasksUpdate's initial callback
+          tasksUnsubscribeRef.current = onTasksUpdate(
+            appUser.uid,
+            (data) => { // data is { tasks: Task[], isLoading: boolean }
+              if (!didUnsubscribe) {
+                setRealtimeTasks(data.tasks);
+                setAreRealtimeTasksLoading(data.isLoading);
+              }
+            }
+          );
+        } else {
+          setAreRealtimeTasksLoading(false); 
         }
       }
     });
@@ -64,13 +96,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return () => {
       didUnsubscribe = true;
       unsubscribeAuthState();
+      if (tasksUnsubscribeRef.current) {
+        tasksUnsubscribeRef.current();
+      }
     };
-  }, []); 
+  }, [isInitialLoading]); // Keep isInitialLoading to ensure it runs once correctly
 
   const handleLogin = useCallback(async (email: string, pass: string) => {
     setIsLoading(true);
     try {
       const loggedInUser = await apiLogin(email, pass);
+      // User state and task listeners will be updated by onAuthStateChangeCallback
       router.push('/dashboard');
       return loggedInUser;
     } catch (error) {
@@ -85,7 +121,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setIsLoading(true);
     try {
       const registeredUser = await apiRegister(name, email, pass);
-      router.push('/dashboard'); // Consider redirecting to a "please verify email" page or dashboard
+      // User state and task listeners will be updated by onAuthStateChangeCallback
+      router.push('/dashboard'); 
       return registeredUser;
     } catch (error) {
       console.error("Registration failed:", error);
@@ -99,6 +136,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setIsLoading(true);
     try {
       await apiLogout();
+      // User state (to null) and task listeners (cleanup) will be handled by onAuthStateChangeCallback
       router.push('/login');
     } catch (error) {
       console.error("Logout failed:", error);
@@ -109,7 +147,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, [router]);
 
   return (
-    <AuthContext.Provider value={{ user, login: handleLogin, register: handleRegister, logout: handleLogout, isLoading, isInitialLoading }}>
+    <AuthContext.Provider value={{ 
+        user, 
+        login: handleLogin, 
+        register: handleRegister, 
+        logout: handleLogout, 
+        isLoading, 
+        isInitialLoading,
+        realtimeTasks,
+        areRealtimeTasksLoading 
+    }}>
       {children}
     </AuthContext.Provider>
   );
@@ -124,24 +171,26 @@ export const useAuth = (): AuthContextType => {
 };
 
 export const ProtectedRoute = ({ children }: { children: ReactNode }) => {
-  const { user, isInitialLoading } = useAuth();
+  const { user, isInitialLoading, areRealtimeTasksLoading } = useAuth(); // Include areRealtimeTasksLoading
   const router = useRouter();
   const pathname = usePathname();
 
   useEffect(() => {
-    // If initial load is done, and there's no user, and we are not on public auth pages
-    if (!isInitialLoading && !user && pathname !== '/login' && pathname !== '/register') {
-      router.replace('/login');
-    }
-    // If initial load is done, and there IS a user, and we ARE on public auth pages
-    if (!isInitialLoading && user && (pathname === '/login' || pathname === '/register')) {
-       router.replace('/dashboard');
+    if (!isInitialLoading) { // Wait for auth to settle
+      if (!user && pathname !== '/login' && pathname !== '/register') {
+        router.replace('/login');
+      }
+      if (user && (pathname === '/login' || pathname === '/register')) {
+         router.replace('/dashboard');
+      }
     }
   }, [user, isInitialLoading, router, pathname]);
 
+  // Consider overall loading state: auth initially, then tasks for protected app routes
+  const combinedLoading = isInitialLoading || (user && areRealtimeTasksLoading && pathname !== '/login' && pathname !== '/register');
 
-  // While initial auth check is in progress, show a global loader
-  if (isInitialLoading) {
+
+  if (combinedLoading) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-background">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -149,9 +198,9 @@ export const ProtectedRoute = ({ children }: { children: ReactNode }) => {
       </div>
     );
   }
-
-  // If after initial load, we are on a protected route without a user, show loader while redirecting
-  if (!user && pathname !== '/login' && pathname !== '/register') {
+  
+  // If auth is done, no user, and on a protected route (should be caught by useEffect redirect)
+  if (!isInitialLoading && !user && pathname !== '/login' && pathname !== '/register') {
      return (
       <div className="flex h-screen w-screen items-center justify-center bg-background">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -160,8 +209,8 @@ export const ProtectedRoute = ({ children }: { children: ReactNode }) => {
     );
   }
   
-  // If user is logged in and tries to access login/register, show loader while redirecting
-  if (user && (pathname === '/login' || pathname === '/register')) {
+  // If user is logged in and tries to access login/register (should be caught by useEffect redirect)
+  if (!isInitialLoading && user && (pathname === '/login' || pathname === '/register')) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-background">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -169,7 +218,6 @@ export const ProtectedRoute = ({ children }: { children: ReactNode }) => {
       </div>
     );
   }
-
 
   return <>{children}</>;
 };
