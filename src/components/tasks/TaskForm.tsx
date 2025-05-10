@@ -22,7 +22,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Label } from "@/components/ui/label";
-import type { Task, Profile, TaskStatus, TaskPriority } from "@/lib/types";
+import type { Task, Profile, TaskStatus, TaskPriority, Comment } from "@/lib/types";
 import { TASK_EDITABLE_STATUSES, TASK_PRIORITIES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { CalendarIcon, Loader2, ChevronDown } from "lucide-react";
@@ -32,6 +32,7 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { useState, useEffect, useMemo } from "react";
 import { addTask, updateTask, getProfilesForDropdown } from "@/lib/taskService";
+import type { AppUser } from "@/lib/auth";
 
 const taskFormSchema = z.object({
   title: z.string().min(3, "Title must be at least 3 characters."),
@@ -39,7 +40,8 @@ const taskFormSchema = z.object({
   due_date: z.date({ required_error: "Due date is required." }),
   priority: z.enum(TASK_PRIORITIES as [TaskPriority, ...TaskPriority[]]),
   status: z.enum(TASK_EDITABLE_STATUSES as [Exclude<TaskStatus, "Overdue">, ...Exclude<TaskStatus, "Overdue">[]]),
-  assignee_ids: z.array(z.string()).optional().default([]), 
+  assignee_ids: z.array(z.string()).optional().default([]),
+  newCommentText: z.string().optional(), // New field for adding a comment
 });
 
 type TaskFormValues = z.infer<typeof taskFormSchema>;
@@ -73,6 +75,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
 
   const assignableProfiles = useMemo(() => {
     if (!authUser || !authUser.uid) return allProfiles;
+    // Filter out the current authenticated user from the list of assignable profiles
     return allProfiles.filter(profile => profile.id !== authUser.uid);
   }, [allProfiles, authUser]);
 
@@ -88,6 +91,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
               ? initialData.status as Exclude<TaskStatus, "Overdue"> 
               : "To Do",
       assignee_ids: initialData?.assignee_ids || [],
+      newCommentText: "", // Initialize comment text
     },
   });
 
@@ -97,40 +101,40 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
       return;
     }
     setIsSubmitting(true);
-
-    const taskPayloadBase = {
-      ...values,
-      due_date: formatISO(values.due_date), 
-      description: values.description || "",
-      assignee_ids: values.assignee_ids && values.assignee_ids.length > 0 ? values.assignee_ids : [], 
-    };
     
     try {
       let resultTask: Task;
       if (isEditing && initialData) {
-        let payloadForUpdate: Partial<Omit<Task, 'id' | 'created_at' | 'updated_at' | 'assignees' | 'created_by'>> = {
+        // Prepare payload for updateTask based on permissions
+        const taskUpdatesPayload: Partial<Omit<Task, 'id' | 'created_at' | 'updated_at' | 'assignees' | 'created_by' | 'comments'>> = {};
+        
+        if (isCreator) {
+            taskUpdatesPayload.title = values.title;
+            taskUpdatesPayload.description = values.description || "";
+            taskUpdatesPayload.due_date = formatISO(values.due_date);
+            taskUpdatesPayload.priority = values.priority;
+            taskUpdatesPayload.status = values.status;
+            taskUpdatesPayload.assignee_ids = values.assignee_ids || [];
+        } else {
+            // Non-creator can only update status (and add comment via newCommentText)
+            taskUpdatesPayload.status = values.status;
+        }
+        
+        resultTask = await updateTask(initialData.id, taskUpdatesPayload, values.newCommentText, authUser);
+
+      } else { // Creating a new task
+        const taskCreationPayload = {
             title: values.title,
             description: values.description || "",
             due_date: formatISO(values.due_date),
             priority: values.priority,
-            status: values.status,
+            status: values.status, // status for new task
             assignee_ids: values.assignee_ids || [],
+            created_by_id: authUser.uid,
         };
-
-        if (!isCreator) {
-            payloadForUpdate = {
-                status: values.status,
-            };
-        }
-        
-        resultTask = await updateTask(initialData.id, payloadForUpdate);
-
-      } else {
-        const fullPayloadForAdd = {
-            ...taskPayloadBase,
-            created_by_id: authUser.uid, 
-        };
-        resultTask = await addTask(fullPayloadForAdd as Omit<Task, 'id' | 'created_at' | 'updated_at' | 'status' | 'assignees' | 'created_by'> & { status: Exclude<TaskStatus, "Overdue"> } & { created_by_id: string });
+        // Explicitly type to match addTask signature (excluding comments from initial add, handled by service)
+        resultTask = await addTask(taskCreationPayload as Omit<Task, 'id' | 'created_at' | 'updated_at' | 'assignees' | 'created_by' | 'comments'> & { status: Exclude<TaskStatus, "Overdue">; created_by_id: string });
+        // Note: newCommentText is not used for new tasks in this structure, could be added if needed.
       }
 
       toast({
@@ -142,7 +146,6 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
         onSubmitSuccess(resultTask);
       } else {
         router.push('/tasks'); 
-        // router.refresh(); // Removed as real-time updates should handle list updates
       }
     } catch (error: any) {
       console.error("Failed to save task:", error);
@@ -156,7 +159,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
     }
   }
   
-  const canEditField = !isEditing || isCreator;
+  const canEditCoreFields = !isEditing || isCreator;
 
   return (
     <Form {...form}>
@@ -168,7 +171,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
             <FormItem>
               <FormLabel>Title</FormLabel>
               <FormControl>
-                <Input placeholder="E.g., Finalize project report" {...field} disabled={!canEditField} />
+                <Input placeholder="E.g., Finalize project report" {...field} disabled={!canEditCoreFields} />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -181,7 +184,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
             <FormItem>
               <FormLabel>Description (Optional)</FormLabel>
               <FormControl>
-                <Textarea placeholder="Add more details about the task..." {...field} value={field.value ?? ""} rows={4} disabled={!canEditField} />
+                <Textarea placeholder="Add more details about the task..." {...field} value={field.value ?? ""} rows={4} disabled={!canEditCoreFields} />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -203,7 +206,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
                           "pl-3 text-left font-normal",
                           !field.value && "text-muted-foreground"
                         )}
-                        disabled={!canEditField}
+                        disabled={!canEditCoreFields}
                       >
                         {field.value ? format(field.value, "PPP") : <span>Pick a date</span>}
                         <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
@@ -230,7 +233,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Priority</FormLabel>
-                <Select onValueChange={field.onChange} defaultValue={field.value} disabled={!canEditField}>
+                <Select onValueChange={field.onChange} defaultValue={field.value} disabled={!canEditCoreFields}>
                   <FormControl>
                     <SelectTrigger>
                       <SelectValue placeholder="Select priority" />
@@ -278,7 +281,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
                 <FormLabel>Assign To</FormLabel>
                 <Popover>
                   <PopoverTrigger asChild>
-                    <Button variant="outline" className="w-full justify-start text-left font-normal" disabled={!canEditField}>
+                    <Button variant="outline" className="w-full justify-start text-left font-normal" disabled={!canEditCoreFields}>
                       {field.value && field.value.length > 0
                         ? `${field.value.length} user(s) selected`
                         : "Select assignees"}
@@ -302,9 +305,9 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
                                 form.setValue("assignee_ids", currentIds.filter(id => id !== profile.id));
                               }
                             }}
-                            disabled={!canEditField}
+                            disabled={!canEditCoreFields}
                           />
-                          <Label htmlFor={`assignee-${profile.id}`} className={cn("font-normal flex-1 cursor-pointer text-sm", !canEditField && "cursor-not-allowed opacity-70")}>
+                          <Label htmlFor={`assignee-${profile.id}`} className={cn("font-normal flex-1 cursor-pointer text-sm", !canEditCoreFields && "cursor-not-allowed opacity-70")}>
                             {profile.name} <span className="text-xs text-muted-foreground">({profile.email})</span>
                           </Label>
                         </div>
@@ -314,13 +317,37 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
                   </PopoverContent>
                 </Popover>
                 <FormDescription>
-                  {canEditField ? "Choose team members to assign this task to. You cannot assign tasks to yourself." : "Assignees cannot be changed by non-creators."}
+                  {canEditCoreFields ? "Choose team members to assign this task to. You cannot assign tasks to yourself." : "Assignees cannot be changed by non-creators."}
                 </FormDescription>
                 <FormMessage />
               </FormItem>
             )}
           />
         </div>
+
+        {isEditing && (
+          <FormField
+            control={form.control}
+            name="newCommentText"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Add a Comment (Optional)</FormLabel>
+                <FormControl>
+                  <Textarea
+                    placeholder="Type your comment here..."
+                    {...field}
+                    value={field.value ?? ""}
+                    rows={3}
+                    disabled={isSubmitting}
+                  />
+                </FormControl>
+                <FormDescription>Your comment will be added when you save changes.</FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
+
         <div className="flex justify-end space-x-3 pt-4">
             <Button type="button" variant="outline" onClick={() => router.back()} disabled={isSubmitting}>Cancel</Button>
             <Button type="submit" disabled={isSubmitting}>

@@ -1,6 +1,7 @@
+
 "use client";
 
-import type { Task, Profile } from "@/lib/types";
+import type { Task, Profile, Comment } from "@/lib/types";
 import {
   Card,
   CardContent,
@@ -12,7 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { CalendarDays, Edit3, Trash2, Users, AlertTriangle, CheckCircle2, Zap } from "lucide-react"; // Added Users icon
+import { CalendarDays, Edit3, Trash2, Users, AlertTriangle, CheckCircle2, Zap, MessageSquare } from "lucide-react"; 
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 import {
@@ -22,6 +23,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useAuth } from "@/contexts/AuthContext";
+import { Separator } from "@/components/ui/separator";
 
 interface TaskCardProps {
   task: Task;
@@ -55,8 +57,9 @@ export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
   }
 
   const canDelete = user?.uid === task.created_by_id;
-  // Edit button is now always enabled for users who can see the card.
-  // TaskForm will handle field-level disablement based on creator status.
+  // User can edit if they are creator or an assignee (for status update and comments)
+  const canEdit = user?.uid === task.created_by_id || (task.assignee_ids && task.assignee_ids.includes(user?.uid || ""));
+
 
   return (
     <TooltipProvider>
@@ -69,7 +72,7 @@ export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
           </Badge>
         </div>
         <CardDescription className="text-sm text-muted-foreground mt-1 line-clamp-2">
-          {task.description}
+          {task.description || "No description provided."}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex-grow space-y-3">
@@ -133,20 +136,51 @@ export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
             <span>Created by: {creatorName}</span>
           </div>
         )}
+
+        {task.comments && task.comments.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-border/50">
+            <h4 className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center">
+              <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
+              Recent Comments ({task.comments.length})
+            </h4>
+            <div className="space-y-1.5 max-h-20 overflow-y-auto text-xs">
+              {task.comments.slice(-2).map((comment, index) => ( // Show last 2 comments
+                <div key={index} className="p-1.5 bg-muted/50 rounded-md">
+                  <p className="font-medium text-foreground/80">{comment.userName}:</p>
+                  <p className="text-muted-foreground line-clamp-2">{comment.text}</p>
+                  <p className="text-xs text-muted-foreground/70 mt-0.5">{format(parseISO(comment.createdAt), "MMM d, hh:mm a")}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
       </CardContent>
       <CardFooter className="flex justify-end space-x-2 border-t pt-4">
-        <Button 
-          variant="outline" 
-          size="sm" 
-          onClick={() => onEdit(task)}
-          // Edit button is now always enabled; TaskForm handles field permissions.
-        >
-          <Edit3 className="mr-1 h-4 w-4" /> Edit
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span tabIndex={canEdit ? undefined : 0}>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => onEdit(task)}
+                disabled={!canEdit}
+                aria-disabled={!canEdit}
+              >
+                <Edit3 className="mr-1 h-4 w-4" /> 
+                {user?.uid === task.created_by_id ? "Edit" : "Update Status"}
+              </Button>
+            </span>
+          </TooltipTrigger>
+          {!canEdit && (
+            <TooltipContent>
+              <p>You do not have permission to edit this task.</p>
+            </TooltipContent>
+          )}
+        </Tooltip>
         
         <Tooltip>
           <TooltipTrigger asChild>
-            {/* Span wrapper is necessary for Tooltip to work on disabled buttons */}
             <span tabIndex={canDelete ? undefined : 0}> 
               <Button 
                 variant="destructive" 
@@ -170,4 +204,3 @@ export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
     </TooltipProvider>
   );
 }
-

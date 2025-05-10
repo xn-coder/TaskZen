@@ -1,3 +1,4 @@
+
 # Firebase Studio
 
 This is a NextJS starter in Firebase Studio.
@@ -89,22 +90,48 @@ You need to set up Firestore security rules to allow users to read and write the
                          request.resource.data.due_date != null &&
                          request.resource.data.priority != null &&
                          request.resource.data.status != null &&
-                         request.resource.data.assignee_ids is list && // Ensure assignee_ids is a list (can be empty)
-                         request.resource.data.keys().hasAll(['title', 'description', 'due_date', 'priority', 'status', 'assignee_ids', 'created_by_id', 'created_at', 'updated_at']);
+                         request.resource.data.assignee_ids is list && 
+                         request.resource.data.comments is list && // Ensure comments is a list (can be empty)
+                         request.resource.data.keys().hasAll(['title', 'description', 'due_date', 'priority', 'status', 'assignee_ids', 'created_by_id', 'created_at', 'updated_at', 'comments']);
 
 
           // Update permissions:
-          // - The creator can update any field they are allowed to set during creation.
-          // - Any authenticated user (implicitly, one who can read the task, like an assignee) can update ONLY the 'status' field.
+          // - The creator can update any field they are allowed to set during creation (plus comments).
+          // - Any assignee can update ONLY the 'status' field and add 'comments'.
           allow update: if request.auth != null && (
-                          // Creator can update most fields (updated_at is server-controlled)
+                          // Creator can update most fields
                           (resource.data.created_by_id == request.auth.uid &&
-                           request.resource.data.keys().hasOnly(['title', 'description', 'due_date', 'priority', 'status', 'assignee_ids', 'updated_at'])
+                           request.resource.data.keys().hasOnly(['title', 'description', 'due_date', 'priority', 'status', 'assignee_ids', 'comments', 'updated_at']) &&
+                           // Validate comment structure if comments are being updated by creator
+                           (
+                             !('comments' in request.resource.data.diff(resource.data).affectedKeys()) || // if comments not changed, this is fine
+                             (
+                               request.resource.data.comments.size() >= resource.data.comments.size() && // Allow adding or no change
+                               (request.resource.data.comments.size() == 0 || // Empty array is fine
+                                (request.resource.data.comments.size() > 0 && 
+                                 request.resource.data.comments[request.resource.data.comments.size() -1].userId == request.auth.uid &&
+                                 request.resource.data.comments[request.resource.data.comments.size() -1].text is string &&
+                                 request.resource.data.comments[request.resource.data.comments.size() -1].userName is string &&
+                                 request.resource.data.comments[request.resource.data.comments.size() -1].createdAt is string 
+                                ))
+                             )
+                           )
                           ) ||
-                          // Assignee or other authorized user (with read access) can update only status (and updated_at which is server-set)
+                          // Assignee can update only status and comments
                           (
-                            (request.auth.uid in resource.data.assignee_ids || resource.data.created_by_id == request.auth.uid) && // Ensures user is related to the task
-                            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updated_at'])
+                            (request.auth.uid in resource.data.assignee_ids) &&
+                            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'comments', 'updated_at']) &&
+                            // Validate comment structure if comments are being updated by assignee
+                            (
+                             !('comments' in request.resource.data.diff(resource.data).affectedKeys()) || // if comments not changed, this is fine
+                             (
+                               request.resource.data.comments.size() == resource.data.comments.size() + 1 && // Must be an append of one comment
+                               request.resource.data.comments[request.resource.data.comments.size() -1].userId == request.auth.uid &&
+                               request.resource.data.comments[request.resource.data.comments.size() -1].text is string &&
+                               request.resource.data.comments[request.resource.data.comments.size() -1].userName is string &&
+                               request.resource.data.comments[request.resource.data.comments.size() -1].createdAt is string 
+                             )
+                           )
                           )
                         );
           
@@ -117,11 +144,11 @@ You need to set up Firestore security rules to allow users to read and write the
 
     **Explanation of Task Rules:**
     *   **`read`**: Authenticated users can read tasks if they are the creator or listed in `assignee_ids`.
-    *   **`create`**: Authenticated users can create tasks if the `created_by_id` in the new task data matches their own UID and all required fields are present. `assignee_ids` must be a list (can be empty).
+    *   **`create`**: Authenticated users can create tasks if the `created_by_id` in the new task data matches their own UID, all required fields are present, and `comments` is initialized as a list (typically empty).
     *   **`update`**:
-        *   If the user is the creator (`resource.data.created_by_id == request.auth.uid`), they can update the `title`, `description`, `due_date`, `priority`, `status`, and `assignee_ids`. `updated_at` is also allowed as it's set by `serverTimestamp()`.
-        *   If the user is an assignee or the creator (i.e., has read access), they can update *only* the `status` field (and `updated_at`). The `request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updated_at'])` part ensures that no other fields are being modified in this case.
-    *   **`delete`**: Only the authenticated user who is the creator (`resource.data.created_by_id == request.auth.uid`) can delete the task.
+        *   If the user is the creator, they can update `title`, `description`, `due_date`, `priority`, `status`, `assignee_ids`, and `comments`. The rule for `comments` ensures that if the comments array is modified, new entries are valid and by the current user.
+        *   If the user is an assignee, they can update *only* the `status` field and append to the `comments` array. The rule ensures only `status`, `comments`, and `updated_at` (server-set) are affected, and that if `comments` are changed, it's an append of one valid comment by the current user.
+    *   **`delete`**: Only the authenticated user who is the creator can delete the task.
 
 6.  Click **Publish**.
 
@@ -137,11 +164,12 @@ You need to set up Firestore security rules to allow users to read and write the
         *   `description` (string, can be empty)
         *   `due_date` (Timestamp)
         *   `priority` (string: "Low", "Medium", "High")
-        *   `status` (string: "To Do", "In Progress", "Done") - "Overdue" is a client-side calculated status based on `due_date` and current time if not "Done".
+        *   `status` (string: "To Do", "In Progress", "Done") - "Overdue" is a client-side calculated status.
         *   `assignee_ids` (array of strings, user UIDs, can be empty)
         *   `created_by_id` (string, user UID)
         *   `created_at` (Timestamp, set by server)
         *   `updated_at` (Timestamp, set by server)
+        *   `comments` (array of maps, each map: `{ userId: string, userName: string, text: string, createdAt: Timestamp/string }`) - Can be empty.
 
 When a user registers, a new document is created in the `profiles` collection using their UID as the document ID and storing their name and email.
 
@@ -168,5 +196,4 @@ Firebase allows you to customize authentication emails (like verification, passw
     Make sure your application provides the `displayName` to Firebase Auth when creating or updating a user profile if you want to use it in templates. The current `register` function in `src/lib/auth.ts` updates the Firebase user's `displayName`.
 
 By following these setup steps, your Next.js application should be correctly configured to use Firebase for authentication and Firestore for its database.
-
 ```
