@@ -4,8 +4,8 @@ import { siteConfig } from '@/config/nav';
 import { UserNav } from './UserNav';
 import { Button } from '@/components/ui/button';
 import { CheckSquare, Menu } from 'lucide-react';
-import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
-import { AppSidebarNav } from './AppSidebarNav'; // We'll create this for mobile nav
+import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/sheet'; // Added SheetTitle
+import { AppSidebarNav } from './AppSidebarNav'; 
 
 export function AppHeader() {
   return (
@@ -20,6 +20,7 @@ export function AppHeader() {
               </Button>
             </SheetTrigger>
             <SheetContent side="left" className="w-[240px] p-0">
+              <SheetTitle className="sr-only">{siteConfig.name} Navigation Menu</SheetTitle> {/* Visually hidden title for accessibility */}
               <div className="flex h-16 items-center border-b px-4">
                 <Link href="/dashboard" className="flex items-center text-primary">
                   <CheckSquare className="mr-2 h-6 w-6" />
@@ -47,5 +48,6 @@ export function AppHeader() {
   );
 }
 
-// Need to import mainNavItems for mobile sidebar. Let's put AppSidebarNav in its own file.
+// Need to import mainNavItems for mobile sidebar.
 import { mainNavItems } from '@/config/nav';
+
