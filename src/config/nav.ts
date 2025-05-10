@@ -39,16 +39,17 @@ export const mainNavItems: NavItem[] = [
 export const userNavItems: NavItem[] = [
    {
     title: 'Profile',
-    href: '#', // Placeholder for /profile
+    href: '/profile', // Changed from '#'
     icon: UserCircle,
     disabled: true,
   },
   {
     title: 'Settings',
-    href: '#', // Placeholder for /settings
+    href: '/settings', // Changed from '#'
     icon: Settings,
     disabled: true,
   }
 ];
 
 // No LogOut here, it's a function call within UserNav component.
+
