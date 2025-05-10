@@ -29,8 +29,14 @@ const processTimestampsInDoc = (docData: any): any => {
   return data;
 };
 
+type TaskRowWithPossibleProfile = Partial<Database['public']['Tables']['tasks']['Row']> & { 
+  id: string; 
+  created_by_profile?: Profile | null 
+};
+
+
 export const processTask = async (
-    taskDataFromDb: Partial<Database['public']['Tables']['tasks']['Row'] & { id: string }>, 
+    taskDataFromDb: TaskRowWithPossibleProfile, 
     profilesMap: Map<string, Profile>
   ): Promise<Task> => {
   
@@ -55,7 +61,7 @@ export const processTask = async (
     }
   }
   
-  const createdByProfile = taskData.created_by_id ? profilesMap.get(taskData.created_by_id) : null;
+  const createdByProfile = taskData.created_by_profile || (taskData.created_by_id ? profilesMap.get(taskData.created_by_id) : null);
 
   const sortedComments = (taskData.comments || []).sort((a: Comment, b: Comment) => 
     parseISO(b.createdAt).getTime() - parseISO(a.createdAt).getTime()
@@ -218,7 +224,10 @@ export const updateTask = async (
     .from('tasks')
     .update(updatePayload)
     .eq('id', taskId)
-    .select()
+    .select(`
+      *,
+      created_by_profile:profiles!created_by_id (id, name, email, avatar_url)
+    `)
     .single();
 
   if (error) {
@@ -274,7 +283,10 @@ export const onTasksUpdate = (
       
       const { data: tasksData, error } = await supabaseClient
         .from('tasks')
-        .select('*')
+        .select(`
+          *,
+          created_by_profile:profiles!created_by_id(id, name, email, avatar_url)
+        `)
         .or(`created_by_id.eq.${userId},assignee_ids.cs.{${userId}}`)
         .order('created_at', { ascending: false });
 
@@ -286,7 +298,7 @@ export const onTasksUpdate = (
       }
 
       const processedTasks = await Promise.all(
-        (tasksData || []).map(taskDoc => processTask(taskDoc, profilesMap))
+        (tasksData || []).map(taskDoc => processTask(taskDoc as TaskRowWithPossibleProfile, profilesMap))
       );
       callback({ tasks: processedTasks, isLoading: false, error: null });
     } catch (e: any) {
@@ -322,19 +334,8 @@ export const onTasksUpdate = (
         // console.log(`User ${userId} subscribed to tasks realtime!`);
       }
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-        let errorMessage = `Realtime channel error for user ${userId}: ${status}`;
-        if (err && typeof err === 'object' && 'message' in err) {
-          const channelError = err as Error; // Or specific type if known
-          errorMessage += `. Message: ${channelError.message}`;
-           console.error(errorMessage, err); // Log the full error object
-        } else if (err) {
-          errorMessage += `. Details: ${JSON.stringify(err)}`;
-          console.error(errorMessage, err);
-        } else {
-           console.error(errorMessage, "Error object was undefined or not an object.");
-        }
-        // Consider how to notify the callback about channel errors
-        // For now, it might trigger a re-fetch which could fail and set the error state.
+        console.error(`Realtime channel error for user ${userId}:`, status, err);
+        // Optionally, try to resubscribe or notify user
       }
     });
   
@@ -349,3 +350,4 @@ export const onTasksUpdate = (
 };
 
 import type { Database } from '@/lib/types/supabase';
+

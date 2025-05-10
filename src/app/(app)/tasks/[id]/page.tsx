@@ -59,7 +59,7 @@ export default function TaskDetailPage() {
         .from('tasks')
         .select(`
           *,
-          created_by_profile:profiles!tasks_created_by_id_fkey (
+          created_by_profile:profiles!created_by_id (
             id, name, email, avatar_url
           )
         `)
@@ -73,18 +73,9 @@ export default function TaskDetailPage() {
       
       if (taskDataFromDb) {
         const profilesMap = await getAllProfilesMap();
-        // The created_by_profile is already fetched, ensure it's correctly mapped to created_by
-        // And the raw created_by_id is still the string ID.
-        const taskWithResolvedCreator = {
-          ...taskDataFromDb,
-          created_by_id: taskDataFromDb.created_by_id, // ensure this is the ID string
-          created_by: taskDataFromDb.created_by_profile as Profile || null 
-        };
-        
-        // Remove the temporary created_by_profile field if it exists, to match Task type
-        delete (taskWithResolvedCreator as any).created_by_profile;
-
-        const processedTask = await processTask(taskWithResolvedCreator as any, profilesMap); // processTask will handle assignees
+        // taskDataFromDb will now have `created_by_profile` field if the join is successful
+        // processTask will use it or fall back to profilesMap if needed.
+        const processedTask = await processTask(taskDataFromDb, profilesMap); 
         setTask(processedTask);
         setSelectedStatus(processedTask.status === 'Overdue' ? 'To Do' : processedTask.status); 
       } else {
