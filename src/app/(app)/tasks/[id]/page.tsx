@@ -1,4 +1,3 @@
-
 "use client";
 
 import type { PostgrestError } from '@supabase/supabase-js';
@@ -98,28 +97,48 @@ export default function TaskDetailPage() {
       let toastMessage = "An unexpected error occurred. Please try again.";
       let errorTitle = "Error Loading Task";
 
-      console.error("Full error object in fetchTaskDetails:", e); // Log the raw error `e`
+      // Refined initial logging for the specific line in question
+      if (e && typeof e === 'object' && Object.keys(e).length === 0 && !(e instanceof Error && e.message)) {
+        console.warn("fetchTaskDetails: An empty error object {} was caught initially. This could be due to network issues, RLS, or an unspecific error from Supabase. Detailed analysis follows.", e);
+      } else {
+        console.error("Full error object in fetchTaskDetails:", e); // Original line, now part of conditional logging
+      }
+
+      const pgError = e as PostgrestError; // Attempt to cast for common properties
 
       if (e && typeof e === 'object') {
-        const pgError = e as PostgrestError;
         if (pgError.code === 'PGRST116') { // Resource not found
           uiError = "Task not found.";
           toastMessage = "The requested task could not be found.";
-          if (!router.asPath.startsWith('/tasks')) router.replace('/tasks');
-        } else if (pgError.message) {
-          uiError = `Error: ${pgError.message}`;
-          toastMessage = pgError.message;
+          if (typeof window !== "undefined" && !router.asPath.startsWith('/tasks')) { 
+             router.replace('/tasks');
+          }
+        } else if (pgError.message || pgError.code) { // If it has a message or code, treat as PostgrestError
+          uiError = `Error: ${pgError.message || `Code ${pgError.code}`}`;
+          toastMessage = pgError.message || `An error occurred (Code: ${pgError.code}).`;
           if (pgError.details) toastMessage += ` Details: ${pgError.details}`;
           if (pgError.hint) toastMessage += ` Hint: ${pgError.hint}`;
-        } else if (Object.keys(e).length === 0) {
-           // Specifically handle if e is an empty object
+           console.error(`fetchTaskDetails: PostgrestError. Code: ${pgError.code || 'N/A'}, Message: "${pgError.message || 'N/A'}", Details: "${pgError.details || 'N/A'}", Hint: "${pgError.hint || 'N/A'}"`);
+        } else if (Object.keys(e).length === 0 ) { // It's an object, but no Postgrest properties, and it's empty
            uiError = "An empty error object was received while fetching task details.";
            toastMessage = "An unexpected issue occurred. This might be a network problem or misconfiguration. Check console for details.";
-           console.error("fetchTaskDetails: Caught an empty error object {}. This is unusual and may indicate network issues, RLS problems, or Supabase client behavior that needs investigation.");
+           // The console.warn above provided the initial alert.
+           console.error("fetchTaskDetails: Confirmed empty error object with no identifiable Postgrest properties. This is unusual and may indicate network issues, RLS problems, or Supabase client behavior that needs investigation.");
+        } else {
+          // Fallback for other object-type errors that aren't PGRST116 or clearly empty with no Postgrest props.
+          uiError = "An unexpected object-based error occurred.";
+          toastMessage = "An issue occurred while loading task details. Check console.";
+          console.error("fetchTaskDetails: Caught an unexpected object-type error that is not a typical PostgrestError and not empty:", e);
         }
       } else if (typeof e === 'string') {
         uiError = e;
         toastMessage = e;
+        console.error("fetchTaskDetails: Caught a string error:", e);
+      } else {
+        // For any other type of error (null, undefined, number, boolean etc.)
+        uiError = "An unknown error type was encountered.";
+        toastMessage = "An unexpected issue of unknown type occurred.";
+        console.error("fetchTaskDetails: Caught an error of unknown type:", e);
       }
 
       setError(uiError);
@@ -129,8 +148,6 @@ export default function TaskDetailPage() {
         variant: "destructive",
       });
     } finally {
-      // Ensure isLoading is false if it hasn't been set by the catch block already
-      // It's crucial this runs to prevent infinite loading state on errors.
       if(isLoading) setIsLoading(false);
     }
   };
