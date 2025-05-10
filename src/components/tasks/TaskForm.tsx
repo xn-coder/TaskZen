@@ -30,7 +30,7 @@ import { format, parseISO, formatISO } from "date-fns";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { addTask, updateTask, getProfilesForDropdown } from "@/lib/taskService";
 
 const taskFormSchema = z.object({
@@ -55,13 +55,13 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
   const router = useRouter();
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [assigneeProfiles, setAssigneeProfiles] = useState<Profile[]>([]);
+  const [allProfiles, setAllProfiles] = useState<Profile[]>([]);
 
   useEffect(() => {
     async function fetchProfiles() {
       try {
         const profiles = await getProfilesForDropdown();
-        setAssigneeProfiles(profiles);
+        setAllProfiles(profiles);
       } catch (error) {
         console.error("Failed to fetch profiles for dropdown:", error);
         toast({ title: "Error", description: "Could not load users for assignee field.", variant: "destructive" });
@@ -69,6 +69,12 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
     }
     fetchProfiles();
   }, [toast]);
+
+  const assignableProfiles = useMemo(() => {
+    if (!authUser || !authUser.uid) return allProfiles;
+    return allProfiles.filter(profile => profile.id !== authUser.uid);
+  }, [allProfiles, authUser]);
+
 
   const form = useForm<TaskFormValues>({
     resolver: zodResolver(taskFormSchema),
@@ -95,21 +101,18 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
       ...values,
       due_date: formatISO(values.due_date), 
       description: values.description || "",
-      assignee_ids: values.assignee_ids && values.assignee_ids.length > 0 ? values.assignee_ids : [], // Ensure it's an array, can be empty
+      assignee_ids: values.assignee_ids && values.assignee_ids.length > 0 ? values.assignee_ids : [], 
     };
     
     try {
       let resultTask: Task;
       if (isEditing && initialData) {
-        // Type assertion for updateTask payload is tricky because Omit doesn't play well with deep partials.
-        // We ensure all necessary fields are present from `taskPayloadBase`.
         resultTask = await updateTask(initialData.id, taskPayloadBase as Partial<Omit<Task, 'id' | 'created_at' | 'updated_at' | 'assignees' | 'created_by'>>);
       } else {
         const fullPayloadForAdd = {
             ...taskPayloadBase,
             created_by_id: authUser.uid, 
         };
-        // Type assertion for addTask. The service handles the structure.
         resultTask = await addTask(fullPayloadForAdd as Omit<Task, 'id' | 'created_at' | 'updated_at' | 'status' | 'assignees' | 'created_by'> & { status: Exclude<TaskStatus, "Overdue"> } & { created_by_id: string });
       }
 
@@ -265,8 +268,8 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
                   <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
                     <ScrollArea className="h-48">
                       <div className="p-2 space-y-1">
-                      {assigneeProfiles.length === 0 && <p className="text-sm text-muted-foreground p-2 text-center">No users available.</p>}
-                      {assigneeProfiles.map((profile) => (
+                      {assignableProfiles.length === 0 && <p className="text-sm text-muted-foreground p-2 text-center">No other users available to assign.</p>}
+                      {assignableProfiles.map((profile) => (
                         <div key={profile.id} className="flex items-center space-x-2 p-1.5 hover:bg-accent rounded-md">
                           <Checkbox
                             id={`assignee-${profile.id}`}
@@ -290,7 +293,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
                   </PopoverContent>
                 </Popover>
                 <FormDescription>
-                  Choose team members to assign this task to.
+                  Choose team members to assign this task to. You cannot assign tasks to yourself.
                 </FormDescription>
                 <FormMessage />
               </FormItem>
