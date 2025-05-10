@@ -2,10 +2,10 @@
 "use client";
 
 import { useEffect, useMemo, useCallback } from 'react'; 
-import type { Task } from '@/lib/types'; // Using AppTask as Task
+import type { Task } from '@/lib/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { TaskCard } from '@/components/tasks/TaskCard';
-import { Loader2, ListChecks, UserPlus, AlertOctagon, CheckSquare, AlertTriangle, Users } from 'lucide-react';
+import { Loader2, ListChecks, UserPlus, AlertOctagon, CheckSquare, AlertTriangle, Users, PanelLeft } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
@@ -30,7 +30,11 @@ export default function DashboardPage() {
     if (!user || !user.id || !realtimeTasks) return { assignedTasks: [], createdTasks: [], overdueTasks: [] };
     
     const assignedToUser = realtimeTasks.filter(
-      task => task.assignee_ids && task.assignee_ids.includes(user.id) && task.status !== 'Done' && task.status !== 'Overdue'
+      task => task.assignee_ids && 
+              task.assignee_ids.includes(user.id) && 
+              task.created_by_id === user.id && // Only show if also created by the current user
+              task.status !== 'Done' && 
+              task.status !== 'Overdue'
     );
     const createdByUser = realtimeTasks.filter(
       task => task.created_by_id === user.id && task.status !== 'Done' && task.status !== 'Overdue'
@@ -67,16 +71,15 @@ export default function DashboardPage() {
     );
   }
   
-  // Supabase stores name in user.user_metadata.name or user.profile.name
-  const profileName = user?.user_metadata?.name || user?.profile?.name;
+  const profileName = user?.profile?.name;
 
-  if (user && !profileName && !authLoading && !user.email?.endsWith('@example.com')) { // Don't show for placeholder emails
+  if (user && !profileName && !authLoading && user.email && !user.email.endsWith('@example.com')) { // Don't show for placeholder emails
     return (
        <div className="flex h-full flex-col items-center justify-center text-center p-4 sm:p-6">
         <AlertTriangle className="h-12 w-12 sm:h-16 sm:w-16 text-destructive mb-4" />
         <h2 className="text-lg sm:text-xl font-semibold text-foreground mb-2">Profile Information Missing</h2>
         <p className="text-sm sm:text-base text-muted-foreground mb-6 max-w-md">
-          Your profile information (like your name) could not be fully loaded. This can happen if the profile document is missing, if there are permission issues with the 'profiles' table, or if the `handle_new_user` trigger in Supabase is not working correctly. Please ensure your database is set up correctly (see `README.md` and Supabase migrations).
+          Your profile information (like your name) could not be fully loaded. This can happen if the profile document is missing or if there are permission issues with the 'profiles' collection in Firestore. Please ensure your database is set up correctly (see `README.md`).
         </p>
         <div className="flex flex-col sm:flex-row gap-2">
           <Button onClick={() => window.location.reload()} variant="outline">
@@ -142,7 +145,7 @@ export default function DashboardPage() {
     </section>
   );
   
-  const welcomeName = user.profile?.name || user.user_metadata?.name || user.email?.split('@')[0] || "User";
+  const welcomeName = user.profile?.name || user.email?.split('@')[0] || "User";
 
   return (
     <div className="container mx-auto py-2">
@@ -151,10 +154,11 @@ export default function DashboardPage() {
         <p className="text-sm sm:text-base text-muted-foreground">Here&apos;s a summary of your tasks.</p>
       </div>
 
-      {renderTaskSection("Tasks Assigned to You", dashboardData.assignedTasks, Users, "No active tasks currently assigned to you. Great job!", CheckSquare, "/tasks?filter=assigned")}
-      {renderTaskSection("Tasks You Created", dashboardData.createdTasks, UserPlus, "You haven't created any active tasks yet.", CheckSquare, "/tasks?filter=created")}
+      {renderTaskSection("Tasks Assigned to You", dashboardData.assignedTasks, Users, "No active tasks currently assigned to you that you also created. Create and assign one to yourself!", PanelLeft, "/tasks?filter=assigned_to_self")}
+      {renderTaskSection("Tasks You Created", dashboardData.createdTasks, UserPlus, "You haven't created any active tasks yet.", ListChecks, "/tasks?filter=created")}
       {renderTaskSection("Overdue Tasks", dashboardData.overdueTasks, AlertOctagon, "No overdue tasks. Keep it up!", CheckSquare, "/tasks?filter=overdue")}
 
     </div>
   );
 }
+
