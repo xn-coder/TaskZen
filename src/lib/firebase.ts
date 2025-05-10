@@ -10,36 +10,8 @@ const firebaseConfig: FirebaseOptions = {
   projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
   storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID, // Optional
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID
 };
-
-// These are the environment variables critical for Firebase to initialize.
-// Add or remove variables here as per your project's needs.
-const criticalEnvVars = [
-  'NEXT_PUBLIC_FIREBASE_API_KEY',
-  'NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN',
-  'NEXT_PUBLIC_FIREBASE_PROJECT_ID',
-  // Uncomment if these services are critical for app startup and should be checked
-  // 'NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET',
-  // 'NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID',
-  // 'NEXT_PUBLIC_FIREBASE_APP_ID',
-];
-
-const missingVars = criticalEnvVars.filter(key => !process.env[key]);
-
-if (missingVars.length > 0) {
-  const errorMessage =
-    `Firebase initialization failed: Missing critical environment variables: ${missingVars.join(', ')}. \n` +
-    `Please ensure these variables are correctly set in your .env.local file, which must be located in the root directory of your project (same level as package.json).\n` +
-    `VERY IMPORTANT: You MUST restart your Next.js development server (e.g., stop the 'npm run dev' command and run it again) after creating or modifying the .env.local file for the changes to take effect.\n` +
-    `Double-check the variable names and their values. Refer to the README.md file for detailed setup instructions.\n` +
-    `Firebase services will not be available until this is resolved.`;
-  console.error(errorMessage);
-  // Throw an error to stop the application load if Firebase cannot be initialized.
-  // This makes the issue more prominent than just a console log.
-  throw new Error(errorMessage);
-}
 
 // If we've reached here, all critical environment variables are present.
 let app;

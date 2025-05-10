@@ -11,7 +11,7 @@ import { TaskSearch } from '@/components/tasks/TaskSearch';
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Loader2, PlusCircle, AlertTriangle } from 'lucide-react';
 import Link from 'next/link';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { useToast } from "@/hooks/use-toast";
 import {
   AlertDialog,
@@ -30,6 +30,7 @@ export default function TasksPage() {
   const [isLoading, setIsLoading] = useState(true);
   const searchParams = useSearchParams();
   const router = useRouter();
+  const pathname = usePathname(); // Define pathname
   const { toast } = useToast();
   const [taskToDelete, setTaskToDelete] = useState<string | null>(null);
 
@@ -230,3 +231,4 @@ export default function TasksPage() {
     </div>
   );
 }
+
