@@ -35,7 +35,7 @@ import { deleteTask as apiDeleteTask } from '@/lib/taskService';
 export default function TaskDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const { user: currentUser, isInitialLoading: authLoading } = useAuth();
+  const { user: currentUser, isInitialLoading: authLoading, realtimeTasks } = useAuth(); // Added realtimeTasks
   const { toast } = useToast();
 
   const taskId = typeof params.id === 'string' ? params.id : null;
@@ -61,7 +61,7 @@ export default function TaskDetailPage() {
         const profilesMap = await getAllProfilesMap();
         const processedTask = await processTask(taskSnap, profilesMap);
         setTask(processedTask);
-        setSelectedStatus(processedTask.status === 'Overdue' ? 'To Do' : processedTask.status); // Default to 'To Do' if Overdue for select
+        setSelectedStatus(processedTask.status === 'Overdue' ? 'To Do' : processedTask.status); 
       } else {
         setError("Task not found.");
         toast({ title: "Error", description: "The requested task could not be found.", variant: "destructive" });
@@ -89,7 +89,44 @@ export default function TaskDetailPage() {
       setIsLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId, currentUser, authLoading, router, toast]);
+  }, [taskId, currentUser, authLoading, router]); // Removed toast from deps as it's stable
+
+
+  // Sync with realtimeTasks from AuthContext
+  useEffect(() => {
+    if (taskId && realtimeTasks && realtimeTasks.length > 0) {
+      const contextTask = realtimeTasks.find(t => t.id === taskId);
+      if (contextTask) {
+        // Basic check to avoid re-setting state with identical object reference or deep content
+        // For more complex scenarios, a proper deep-equality check or versioning might be needed
+        if (JSON.stringify(task) !== JSON.stringify(contextTask)) {
+          setTask(contextTask);
+          // Update selectedStatus if the context task's status is different and relevant
+          if (contextTask.status !== selectedStatus && (contextTask.status !== 'Overdue' || selectedStatus === 'Overdue')) {
+            setSelectedStatus(contextTask.status === 'Overdue' ? 'To Do' : contextTask.status);
+          }
+        }
+      } else {
+        // Task not found in context, could mean it was deleted or user lost access.
+        // If `task` is currently set (was fetched), and it's no longer in `realtimeTasks`,
+        // it might have been deleted. Redirect or show a message.
+        if (task) { // If we were displaying a task
+            // Check if this page is still loading its initial data. If so, wait.
+            if (!isLoading) {
+                 // This is a tricky state. The task was visible, now it's not in the user's realtime set.
+                 // It could be deleted or permissions changed.
+                 // For simplicity, if it vanishes from realtimeTasks, and we had it, assume it might be gone.
+                 // A more robust solution would be a direct listener on this task if high consistency is needed.
+                 // console.warn(`Task ${taskId} disappeared from realtime context. It might have been deleted or permissions changed.`);
+                 // Potentially, redirect:
+                 // setError("Task is no longer accessible or has been deleted.");
+                 // router.replace('/tasks');
+                 // For now, let the initial fetch dictate existence, and this syncs updates.
+            }
+        }
+      }
+    }
+  }, [realtimeTasks, taskId, task, isLoading, selectedStatus]); // Added task, isLoading, selectedStatus to deps for correct comparisons & re-runs
 
 
   const handleAddComment = async () => {
@@ -100,16 +137,18 @@ export default function TaskDetailPage() {
         userId: currentUser.uid,
         userName: currentUser.profile?.name || currentUser.displayName || "User",
         text: newComment.trim(),
-        createdAt: new Date().toISOString(), // ISO string
+        createdAt: new Date().toISOString(), 
       };
       const taskDocRef = doc(db, 'tasks', task.id);
       await updateDoc(taskDocRef, {
         comments: arrayUnion(commentToAdd),
         updated_at: serverTimestamp(),
       });
+      // Optimistic update (realtime listener will also update)
       setTask(prevTask => prevTask ? ({
         ...prevTask,
         comments: [...(prevTask.comments || []), commentToAdd].sort((a, b) => parseISO(b.createdAt).getTime() - parseISO(a.createdAt).getTime()),
+        updated_at: new Date().toISOString(), // Optimistic updated_at
       }) : null);
       setNewComment("");
       toast({ title: "Comment Added", description: "Your comment has been posted." });
@@ -123,10 +162,9 @@ export default function TaskDetailPage() {
   
   const handleStatusUpdate = async (newStatus: TaskStatus) => {
     if (!task || !currentUser || newStatus === task.status) return;
-    // Prevent updating to "Overdue" manually
     if (newStatus === "Overdue" && task.status !== "Overdue") {
         toast({ title: "Invalid Status", description: "Cannot manually set status to Overdue.", variant: "destructive" });
-        setSelectedStatus(task.status === 'Overdue' ? 'To Do' : task.status); // Reset select
+        setSelectedStatus(task.status === 'Overdue' ? 'To Do' : task.status);
         return;
     }
 
@@ -137,14 +175,14 @@ export default function TaskDetailPage() {
             status: newStatus,
             updated_at: serverTimestamp(),
         });
-        // Optimistically update local state, or refetch if consistency is critical
+        // Optimistic update
         setTask(prev => prev ? ({ ...prev, status: newStatus, updated_at: new Date().toISOString() }) : null);
         setSelectedStatus(newStatus);
         toast({ title: "Status Updated", description: `Task status changed to ${newStatus}.` });
     } catch (e) {
         console.error("Error updating status:", e);
         toast({ title: "Error", description: "Failed to update task status.", variant: "destructive" });
-        setSelectedStatus(task.status === 'Overdue' ? 'To Do' : task.status); // Revert on error
+        setSelectedStatus(task.status === 'Overdue' ? 'To Do' : task.status); 
     } finally {
         setIsUpdatingStatus(false);
     }
@@ -295,7 +333,7 @@ export default function TaskDetailPage() {
                 </Select>
               ) : (
                  <Badge variant={task.status === "Done" ? "default" : task.status === "Overdue" ? "destructive" : "secondary" }
-                   className={`text-sm ${task.status === "Done" ? "bg-green-500" : task.status === "Overdue" ? "bg-orange-500" : "" }`}
+                   className={`text-sm ${task.status === "Done" ? "bg-green-500 text-primary-foreground" : task.status === "Overdue" ? "bg-orange-500 text-primary-foreground" : "" }`}
                  >
                     {task.status}
                 </Badge>
@@ -368,7 +406,7 @@ export default function TaskDetailPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteTask} className="bg-destructive hover:bg-destructive/90">
+            <AlertDialogAction onClick={handleDeleteTask} className="bg-destructive hover:bg-destructive/90 text-destructive-foreground">
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -377,3 +415,4 @@ export default function TaskDetailPage() {
     </div>
   );
 }
+
