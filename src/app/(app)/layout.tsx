@@ -16,7 +16,7 @@ export default function AppLayout({
         <AppHeader />
         <div className="flex flex-1">
           <AppSidebar />
-          <main className="flex-1 bg-secondary/50 p-4 md:p-6 lg:p-8">
+          <main className="flex-1 bg-secondary/50 p-2 sm:p-4 md:p-6 lg:p-8">
             {children}
           </main>
         </div>
@@ -24,3 +24,4 @@ export default function AppLayout({
     </ProtectedRoute>
   );
 }
+

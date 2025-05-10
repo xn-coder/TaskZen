@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useEffect, useMemo, useCallback } from 'react'; // Added useCallback
+import { useEffect, useMemo, useCallback } from 'react'; 
 import type { Task } from '@/lib/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { TaskCard } from '@/components/tasks/TaskCard';
@@ -53,10 +53,10 @@ export default function DashboardPage() {
   if (!user && !authLoading) {
      if (typeof window !== "undefined") router.replace('/login');
      return (
-       <div className="flex h-full flex-col items-center justify-center text-center p-6">
-        <AlertTriangle className="h-16 w-16 text-destructive mb-4" />
-        <h2 className="text-xl font-semibold text-foreground mb-2">Redirecting to Login</h2>
-        <p className="text-muted-foreground mb-6">
+       <div className="flex h-full flex-col items-center justify-center text-center p-4 sm:p-6">
+        <AlertTriangle className="h-12 w-12 sm:h-16 sm:w-16 text-destructive mb-4" />
+        <h2 className="text-lg sm:text-xl font-semibold text-foreground mb-2">Redirecting to Login</h2>
+        <p className="text-sm sm:text-base text-muted-foreground mb-6">
           Please log in to view your dashboard.
         </p>
         <Button onClick={() => router.push('/login')} variant="outline">
@@ -68,13 +68,13 @@ export default function DashboardPage() {
   
   if (user && !user.profile && !authLoading) {
     return (
-       <div className="flex h-full flex-col items-center justify-center text-center p-6">
-        <AlertTriangle className="h-16 w-16 text-destructive mb-4" />
-        <h2 className="text-xl font-semibold text-foreground mb-2">Profile Not Loaded</h2>
-        <p className="text-muted-foreground mb-6 max-w-md">
+       <div className="flex h-full flex-col items-center justify-center text-center p-4 sm:p-6">
+        <AlertTriangle className="h-12 w-12 sm:h-16 sm:w-16 text-destructive mb-4" />
+        <h2 className="text-lg sm:text-xl font-semibold text-foreground mb-2">Profile Not Loaded</h2>
+        <p className="text-sm sm:text-base text-muted-foreground mb-6 max-w-md">
           Your profile information could not be loaded. This can happen if the profile document is missing or if there are permission issues. Please ensure your database is set up correctly and rules allow profile reads. Refer to `README.md` for setup instructions.
         </p>
-        <div className="flex gap-2">
+        <div className="flex flex-col sm:flex-row gap-2">
           <Button onClick={() => window.location.reload()} variant="outline">
             Refresh Page
           </Button>
@@ -110,8 +110,8 @@ export default function DashboardPage() {
 
   const renderTaskSection = (title: string, tasksToDisplay: Task[], IconComponent: React.ElementType, emptyMessage: string, EmptyIconComponent?: React.ElementType, viewAllLink?: string) => (
     <section className="mb-8">
-      <div className="flex justify-between items-center mb-4">
-        <h2 className="text-2xl font-semibold flex items-center">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4">
+        <h2 className="text-xl sm:text-2xl font-semibold flex items-center mb-2 sm:mb-0">
           <span className="mr-2 p-2 bg-primary/10 text-primary rounded-lg">
             <IconComponent size={24} />
           </span>
@@ -124,7 +124,7 @@ export default function DashboardPage() {
          )}
       </div>
       {tasksToDisplay.length > 0 ? (
-        <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {tasksToDisplay.slice(0,4).map(task => (
             <TaskCard
               key={task.id}
@@ -135,10 +135,10 @@ export default function DashboardPage() {
           ))}
         </div>
       ) : (
-        <Card className="p-6 text-center text-muted-foreground border-dashed border-muted-foreground/30 rounded-lg bg-card">
+        <Card className="p-4 sm:p-6 text-center text-muted-foreground border-dashed border-muted-foreground/30 rounded-lg bg-card">
           {EmptyIconComponent && <EmptyIconComponent size={48} className="mx-auto mb-4 text-muted-foreground/50" />}
-          <p>{emptyMessage}</p>
-          <Button asChild variant="link" className="mt-2 text-primary">
+          <p className="text-sm sm:text-base">{emptyMessage}</p>
+          <Button asChild variant="link" className="mt-2 text-primary text-sm sm:text-base">
             <Link href="/tasks/create">Create a new task</Link>
           </Button>
         </Card>
@@ -149,9 +149,9 @@ export default function DashboardPage() {
 
   return (
     <div className="container mx-auto py-2">
-      <div className="mb-8 p-6 bg-card rounded-lg shadow">
-        <h1 className="text-3xl font-bold text-foreground">Welcome back, {welcomeName}!</h1>
-        <p className="text-muted-foreground">Here&apos;s a summary of your tasks.</p>
+      <div className="mb-6 sm:mb-8 p-4 sm:p-6 bg-card rounded-lg shadow">
+        <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Welcome back, {welcomeName}!</h1>
+        <p className="text-sm sm:text-base text-muted-foreground">Here&apos;s a summary of your tasks.</p>
       </div>
 
       {renderTaskSection("Tasks Assigned to You", dashboardData.assignedTasks, Users, "No active tasks currently assigned to you. Great job!", CheckSquare, "/tasks?filter=assigned")}
@@ -161,3 +161,4 @@ export default function DashboardPage() {
     </div>
   );
 }
+

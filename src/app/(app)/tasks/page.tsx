@@ -91,7 +91,8 @@ export default function TasksPage() {
   const clearFilters = useCallback(() => {
     setFilters({ status: [], priority: [] });
     const params = new URLSearchParams(searchParams.toString()); 
-    params.delete("filter"); 
+    params.delete("filter");
+    params.delete("query"); // Also clear query when clearing filters
     router.replace(`${pathname}?${params.toString()}`, { scroll: false }); 
   }, [searchParams, router, pathname]);
 
@@ -147,9 +148,9 @@ export default function TasksPage() {
 
   return (
     <div className="container mx-auto py-2">
-      <div className="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <h1 className="text-3xl font-bold text-foreground">All Tasks</h1>
-        <Button asChild>
+      <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <h1 className="text-2xl sm:text-3xl font-bold text-foreground">All Tasks</h1>
+        <Button asChild className="w-full sm:w-auto">
           <Link href="/tasks/create">
             <PlusCircle className="mr-2 h-5 w-5" /> Create New Task
           </Link>
@@ -160,15 +161,17 @@ export default function TasksPage() {
         <div className="flex-grow">
           <TaskSearch />
         </div>
-        <TaskFilter 
-          appliedFilters={filters}
-          onFilterChange={handleFilterChange}
-          onClearFilters={clearFilters}
-        />
+        <div className="flex-shrink-0">
+          <TaskFilter 
+            appliedFilters={filters}
+            onFilterChange={handleFilterChange}
+            onClearFilters={clearFilters}
+          />
+        </div>
       </div>
 
       {filteredTasks.length > 0 ? (
-        <div className="grid gap-6 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
           {filteredTasks.map(task => (
             <TaskCard 
               key={task.id} 
@@ -179,10 +182,10 @@ export default function TasksPage() {
           ))}
         </div>
       ) : (
-        <div className="mt-10 flex flex-col items-center justify-center text-center p-8 border-2 border-dashed border-muted-foreground/30 rounded-lg bg-card">
-          <AlertTriangle className="h-16 w-16 text-muted-foreground/50 mb-4" />
-          <h2 className="text-xl font-semibold text-foreground mb-2">No Tasks Found</h2>
-          <p className="text-muted-foreground">
+        <div className="mt-10 flex flex-col items-center justify-center text-center p-6 sm:p-8 border-2 border-dashed border-muted-foreground/30 rounded-lg bg-card">
+          <AlertTriangle className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground/50 mb-4" />
+          <h2 className="text-lg sm:text-xl font-semibold text-foreground mb-2">No Tasks Found</h2>
+          <p className="text-sm sm:text-base text-muted-foreground">
             {(query || filters.status.length > 0 || filters.priority.length > 0) 
               ? "Try adjusting your search or filters." 
               : "You haven't created or been assigned any tasks yet."}
@@ -216,3 +219,4 @@ export default function TasksPage() {
     </div>
   );
 }
+

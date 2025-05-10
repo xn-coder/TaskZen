@@ -1,7 +1,7 @@
 
 "use client";
 
-import * as React from 'react'; // Imported React for React.memo
+import * as React from 'react'; 
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -14,6 +14,7 @@ import {
 import { TASK_PRIORITIES, TASK_FILTERABLE_STATUSES } from "@/lib/constants";
 import type { TaskPriority, TaskStatus } from "@/lib/types";
 import { FilterIcon, XIcon } from "lucide-react";
+import { cn } from '@/lib/utils';
 
 interface TaskFilterProps {
   appliedFilters: {
@@ -28,14 +29,16 @@ const TaskFilterComponent = ({ appliedFilters, onFilterChange, onClearFilters }:
   const activeFilterCount = appliedFilters.status.length + appliedFilters.priority.length;
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="outline" className="relative">
-            <FilterIcon className="mr-2 h-4 w-4" />
-            Filter Tasks
+          <Button variant="outline" className="relative w-full sm:w-auto justify-between sm:justify-start">
+            <div className="flex items-center">
+              <FilterIcon className="mr-2 h-4 w-4" />
+              Filter Tasks
+            </div>
             {activeFilterCount > 0 && (
-              <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">
+              <span className="ml-auto sm:ml-0 sm:absolute sm:-top-1 sm:-right-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">
                 {activeFilterCount}
               </span>
             )}
@@ -68,9 +71,9 @@ const TaskFilterComponent = ({ appliedFilters, onFilterChange, onClearFilters }:
         </DropdownMenuContent>
       </DropdownMenu>
       {activeFilterCount > 0 && (
-        <Button variant="ghost" size="sm" onClick={onClearFilters} className="text-muted-foreground">
+        <Button variant="ghost" size="sm" onClick={onClearFilters} className="text-muted-foreground w-full sm:w-auto justify-start sm:justify-center">
           <XIcon className="mr-1 h-4 w-4" />
-          Clear
+          Clear Filters
         </Button>
       )}
     </div>
