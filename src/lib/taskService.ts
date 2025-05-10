@@ -186,6 +186,10 @@ export const addTask = async (
       console.error(logMessage, error);
       if (typeof error === 'object' && 'message' in error) {
         const pgError = error as PostgrestError;
+        // Check for specific error code related to 'assignee_ids' if Supabase provides one
+        if (pgError.message.includes("assignee_ids") && pgError.code) { // Example check
+             throw new Error(`Failed to create task due to an issue with assignees: ${pgError.message} (Code: ${pgError.code}). Please check the 'assignees' field.`);
+        }
         throw new Error(`Failed to create task: ${pgError.message} (Code: ${pgError.code})`);
       } else {
         throw new Error('Failed to create task due to an unknown error.');
@@ -226,7 +230,7 @@ export const updateTask = async (
   const updatePayload: any = { ...taskUpdates };
   delete updatePayload.id; 
 
-  if (taskUpdates.due_date) {
+  if (taskUpdates.due_date && typeof taskUpdates.due_date === 'string') {
     try {
       updatePayload.due_date = formatISO(parseISO(taskUpdates.due_date));
     } catch(e) {
@@ -319,7 +323,7 @@ export const onTasksUpdate = (
       const { data: tasksData, error } = await supabaseClient
         .from('tasks')
         .select(`*`) 
-        .or(`created_by_id.eq.${userId},assignee_ids.cs.{${userId}}`)
+        .or(`created_by_id.eq.${userId},assignee_ids.cs.{${userId}}`) // Ensure 'assignee_ids' is correct
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -402,34 +406,32 @@ export const onTasksUpdate = (
       }
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
         let channelError : PostgrestError;
-        if (err && typeof err === 'object' && 'message' in err) { // Check if err is a PostgrestError-like object
+        if (err && typeof err === 'object' && 'message' in err) { 
             channelError = err as PostgrestError;
-             console.error(`Realtime channel error for user ${userId}: Message: ${channelError.message}, Code: ${channelError.code}, Details: ${channelError.details}, Hint: ${channelError.hint}. Raw Supabase event error:`, err);
-        } else { // err is not a PostgrestError or is undefined
+             console.error(`Realtime channel for user ${userId} encountered ${status}. Message: ${channelError.message}, Code: ${channelError.code}, Details: ${channelError.details || 'N/A'}, Hint: ${channelError.hint || 'N/A'}. Raw Supabase event error:`, err);
+        } else { 
             let errorDetailsString: string;
             if (err === undefined) {
-                errorDetailsString = "No error object provided by Supabase for this channel event.";
+                errorDetailsString = "No specific error details provided by Supabase.";
+                console.error(`Realtime channel for user ${userId} encountered ${status}. ${errorDetailsString}`);
             } else if (typeof err === 'string') {
                 errorDetailsString = err;
-            } else {
+                 console.error(`Realtime channel for user ${userId} encountered ${status} with message: "${err}"`);
+            } else { 
                 try {
-                    // Attempt to serialize, capturing all properties including non-enumerable ones from Error objects
                     errorDetailsString = JSON.stringify(err, Object.getOwnPropertyNames(err), 2);
                 } catch {
-                    errorDetailsString = String(err); // Fallback if stringify fails
+                    errorDetailsString = String(err); 
                 }
+                console.error(`Realtime channel for user ${userId} encountered ${status}. Raw error data: ${errorDetailsString}`);
             }
-            channelError = {
-                message: `Realtime channel ${status}`, // Use status for message
-                code: status, // Use status for code
-                details: errorDetailsString,
-                hint: "Check network or Supabase realtime status."
-            } as PostgrestError; // Cast to PostgrestError for consistency
             
-            console.error(
-              `Realtime channel error for user ${userId}: Status: ${status}. ` +
-              `Raw Supabase event error: ${errorDetailsString}. (Processed as PostgrestError analogue)`
-            );
+            channelError = {
+                message: `Realtime channel ${status}. ${errorDetailsString.startsWith("No specific") ? errorDetailsString : "See details."}`,
+                code: status, 
+                details: errorDetailsString,
+                hint: "Check network or Supabase realtime status. This might be a temporary issue."
+            } as PostgrestError;
         }
         callback({ tasks: [], isLoading: false, error: channelError});
       }
@@ -444,5 +446,3 @@ export const onTasksUpdate = (
     }
   };
 };
-
-    
