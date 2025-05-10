@@ -189,7 +189,11 @@ export default function TaskDetailPage() {
   };
 
   const handleDeleteTask = async () => {
-    if (!task || !currentUser || currentUser.uid !== task.created_by_id) return;
+    if (!task || !currentUser || currentUser.uid !== task.created_by_id) {
+      toast({ title: "Permission Denied", description: "Only the task creator can delete this task.", variant: "destructive" });
+      setShowDeleteConfirm(false);
+      return;
+    }
     try {
       await apiDeleteTask(task.id);
       toast({ title: "Task Deleted", description: `Task "${task.title}" has been deleted.` });
@@ -281,7 +285,7 @@ export default function TaskDetailPage() {
                       <div className="flex justify-between items-center">
                         <p className="text-sm font-medium text-foreground">{comment.userName}</p>
                         <p className="text-xs text-muted-foreground">
-                          {formatDistanceToNow(parseISO(comment.createdAt), { addSuffix: true })}
+                          {comment.createdAt ? formatDistanceToNow(parseISO(comment.createdAt), { addSuffix: true }) : 'Recently'}
                         </p>
                       </div>
                       <p className="text-sm text-foreground/90 mt-1">{comment.text}</p>
@@ -360,12 +364,12 @@ export default function TaskDetailPage() {
                 <div className="flex items-center space-x-2">
                   <Avatar className="h-8 w-8">
                      <AvatarImage src={task.created_by.avatar_url || `https://avatar.vercel.sh/${task.created_by.email || task.created_by.id}.png`} alt={task.created_by.name} data-ai-hint="profile avatar" />
-                     <AvatarFallback>{task.created_by.name.charAt(0).toUpperCase()}</AvatarFallback>
+                     <AvatarFallback>{task.created_by.name ? task.created_by.name.charAt(0).toUpperCase() : 'U'}</AvatarFallback>
                   </Avatar>
-                  <span className="text-sm text-foreground">{task.created_by.name}</span>
+                  <span className="text-sm text-foreground">{task.created_by.name || 'Unknown User'}</span>
                 </div>
                  <p className="text-xs text-muted-foreground mt-1">
-                    On: {format(parseISO(task.created_at), "MMM d, yyyy, hh:mm a")}
+                    On: {task.created_at ? format(parseISO(task.created_at), "MMM d, yyyy, hh:mm a") : 'N/A'}
                 </p>
               </div>
             )}
@@ -378,9 +382,9 @@ export default function TaskDetailPage() {
                     <div key={assignee.id} className="flex items-center space-x-2">
                       <Avatar className="h-8 w-8">
                         <AvatarImage src={assignee.avatar_url || `https://avatar.vercel.sh/${assignee.email || assignee.id}.png`} alt={assignee.name} data-ai-hint="profile avatar"/>
-                        <AvatarFallback>{assignee.name.charAt(0).toUpperCase()}</AvatarFallback>
+                        <AvatarFallback>{assignee.name ? assignee.name.charAt(0).toUpperCase() : 'U'}</AvatarFallback>
                       </Avatar>
-                      <span className="text-sm text-foreground">{assignee.name}</span>
+                      <span className="text-sm text-foreground">{assignee.name || 'Unknown User'}</span>
                     </div>
                   ))}
                 </div>
@@ -389,7 +393,7 @@ export default function TaskDetailPage() {
              <Separator />
              <div>
                  <p className="text-xs text-muted-foreground">
-                    Last updated: {formatDistanceToNow(parseISO(task.updated_at), { addSuffix: true })}
+                    {task.updated_at ? `Last updated: ${formatDistanceToNow(parseISO(task.updated_at), { addSuffix: true })}` : 'Last updated: N/A'}
                 </p>
              </div>
           </aside>
