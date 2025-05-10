@@ -1,7 +1,7 @@
 
 "use client";
 
-import type { Task, Profile } from "@/lib/types"; // Updated to use Profile
+import type { Task, Profile } from "@/lib/types";
 import {
   Card,
   CardContent,
@@ -47,6 +47,18 @@ const statusIcons: Record<Task["status"], React.ElementType> = {
 export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
   const StatusIcon = statusIcons[task.status] || Zap;
 
+  // Fallback for assignee/creator name if profile object isn't fully populated
+  const assigneeName = task.assignee?.name || "Unassigned";
+  const assigneeEmail = task.assignee?.email; // For Vercel avatar fallback
+  const assigneeIdForAvatar = task.assignee?.id; // Firebase UID
+  const assigneeAvatarUrl = task.assignee?.avatar_url;
+
+  const creatorName = task.created_by?.name || "Unknown Creator";
+  
+  const getAvatarFallback = (name: string | undefined) => {
+    return name ? name.charAt(0).toUpperCase() : 'U';
+  }
+
   return (
     <TooltipProvider>
     <Card className={cn("flex flex-col shadow-md hover:shadow-lg transition-shadow duration-200", className)}>
@@ -84,7 +96,7 @@ export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
           </Badge>
         </div>
 
-        {task.assignee && (
+        {task.assignee_id && ( // Check assignee_id to decide if this block should render
           <div className="flex items-center text-sm text-muted-foreground">
             <UserCircle className="mr-2 h-4 w-4" />
             <span>Assigned to:</span>
@@ -92,20 +104,20 @@ export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
               <TooltipTrigger asChild>
                 <Avatar className="ml-2 h-6 w-6">
                   <AvatarImage 
-                    src={task.assignee.avatar_url || `https://avatar.vercel.sh/${task.assignee.email || task.assignee.id}.png`} 
-                    alt={task.assignee.name} data-ai-hint="profile avatar"/>
-                  <AvatarFallback>{task.assignee.name.charAt(0).toUpperCase()}</AvatarFallback>
+                    src={assigneeAvatarUrl || `https://avatar.vercel.sh/${assigneeEmail || assigneeIdForAvatar}.png`} 
+                    alt={assigneeName} data-ai-hint="profile avatar"/>
+                  <AvatarFallback>{getAvatarFallback(assigneeName)}</AvatarFallback>
                 </Avatar>
               </TooltipTrigger>
               <TooltipContent>
-                <p>{task.assignee.name}</p>
+                <p>{assigneeName}</p>
               </TooltipContent>
             </Tooltip>
           </div>
         )}
-         {task.created_by && (
+         {task.created_by_id && ( // Check created_by_id
           <div className="flex items-center text-xs text-muted-foreground/80 pt-1">
-            <span>Created by: {task.created_by.name}</span>
+            <span>Created by: {creatorName}</span>
           </div>
         )}
       </CardContent>

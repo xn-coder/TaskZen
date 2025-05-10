@@ -19,7 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import type { Task, Profile, TaskStatus, TaskPriority } from "@/lib/types"; // Updated types
+import type { Task, Profile, TaskStatus, TaskPriority } from "@/lib/types";
 import { TASK_EDITABLE_STATUSES, TASK_PRIORITIES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { CalendarIcon, Loader2 } from "lucide-react";
@@ -27,16 +27,16 @@ import { format, parseISO, formatISO } from "date-fns";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
-import { useState, useEffect } from "react"; // Import useState, useEffect
-import { addTask, updateTask, getProfilesForDropdown } from "@/lib/taskService"; // Use taskService
+import { useState, useEffect } from "react";
+import { addTask, updateTask, getProfilesForDropdown } from "@/lib/taskService";
 
 const taskFormSchema = z.object({
   title: z.string().min(3, "Title must be at least 3 characters."),
   description: z.string().optional(),
   due_date: z.date({ required_error: "Due date is required." }),
-  priority: z.enum(TASK_PRIORITIES as [TaskPriority, ...TaskPriority[]]), // Zod enum helper
+  priority: z.enum(TASK_PRIORITIES as [TaskPriority, ...TaskPriority[]]),
   status: z.enum(TASK_EDITABLE_STATUSES as [Exclude<TaskStatus, "Overdue">, ...Exclude<TaskStatus, "Overdue">[]]),
-  assignee_id: z.string().optional(), // Storing ID now
+  assignee_id: z.string().optional(),
 });
 
 type TaskFormValues = z.infer<typeof taskFormSchema>;
@@ -48,10 +48,10 @@ interface TaskFormProps {
 }
 
 export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = false }: TaskFormProps) {
-  const { user: authUser } = useAuth(); // authUser contains Supabase user and profile
+  const { user: authUser } = useAuth();
   const router = useRouter();
   const { toast } = useToast();
-  const [isSubmitting, setIsSubmitting] = useState(false); // Renamed from isLoading for clarity
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [assigneeProfiles, setAssigneeProfiles] = useState<Profile[]>([]);
 
   useEffect(() => {
@@ -74,7 +74,6 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
       description: initialData?.description || "",
       due_date: initialData?.due_date ? parseISO(initialData.due_date) : new Date(),
       priority: initialData?.priority || "Medium",
-      // initialData.status could be "Overdue", map to an editable status
       status: initialData?.status && TASK_EDITABLE_STATUSES.includes(initialData.status as Exclude<TaskStatus, "Overdue">) 
               ? initialData.status as Exclude<TaskStatus, "Overdue"> 
               : "To Do",
@@ -83,33 +82,33 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
   });
 
   async function onSubmit(values: TaskFormValues) {
-    if (!authUser || !authUser.profile) {
+    if (!authUser || !authUser.profile) { // AuthUser.profile might not be strictly needed if we only need uid
       toast({ title: "Error", description: "You must be logged in to perform this action.", variant: "destructive"});
       return;
     }
     setIsSubmitting(true);
 
-    const taskPayload = {
+    // Prepare payload for Firestore
+    // Dates are handled by taskService (converted to Firebase Timestamps there)
+    const taskPayloadBase = {
       ...values,
-      due_date: formatISO(values.due_date), // Format date to ISO string for Supabase
-      // assignee_id is already in values
-      // description can be null if empty, Supabase handles optional fields
+      due_date: formatISO(values.due_date), // Keep as ISO string for taskService
       description: values.description || "",
+      assignee_id: values.assignee_id || null, // Ensure null if undefined
     };
     
     try {
       let resultTask: Task;
       if (isEditing && initialData) {
-        resultTask = await updateTask(initialData.id, {
-            ...taskPayload,
-            // created_by_id and created_at should not change on update
-        });
+        // For updates, created_by_id and created_at are not changed
+        resultTask = await updateTask(initialData.id, taskPayloadBase);
       } else {
-        resultTask = await addTask({
-            ...taskPayload,
-            created_by_id: authUser.id, // Supabase auth user ID for created_by_id
-            // Supabase handles created_at, updated_at by default
-        });
+        // For new tasks, add created_by_id
+        const fullPayloadForAdd = {
+            ...taskPayloadBase,
+            created_by_id: authUser.uid, // Use Firebase auth user UID for created_by_id
+        };
+        resultTask = await addTask(fullPayloadForAdd as Omit<Task, 'id' | 'created_at' | 'updated_at' | 'status' | 'assignee' | 'created_by'> & { status: Exclude<TaskStatus, "Overdue'> } & { created_by_id: string });
       }
 
       toast({
@@ -120,7 +119,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
       if (onSubmitSuccess) {
         onSubmitSuccess(resultTask);
       } else {
-        router.push('/tasks'); // Default redirect
+        router.push('/tasks'); 
         router.refresh(); 
       }
     } catch (error: any) {
@@ -252,7 +251,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Assign To (Optional)</FormLabel>
-                <Select onValueChange={(value) => field.onChange(value === "unassigned" ? undefined : value)} defaultValue={field.value}>
+                <Select onValueChange={(value) => field.onChange(value === "unassigned" ? undefined : value)} value={field.value || "unassigned"}>
                   <FormControl>
                     <SelectTrigger>
                       <SelectValue placeholder="Select assignee" />
@@ -261,7 +260,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
                   <SelectContent>
                     <SelectItem value="unassigned">Unassigned</SelectItem>
                     {assigneeProfiles.map(profile => (
-                      <SelectItem key={profile.id} value={profile.id}>{profile.name}</SelectItem>
+                      <SelectItem key={profile.id} value={profile.id}>{profile.name} ({profile.email})</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

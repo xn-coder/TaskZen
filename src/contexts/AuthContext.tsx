@@ -1,13 +1,14 @@
+
 "use client";
 
-import type { AppUser } from '@/lib/auth'; // Updated User type
+import type { AppUser } from '@/lib/auth'; 
 import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import {
   getCurrentUser as apiGetCurrentUser,
   login as apiLogin,
   register as apiRegister,
   logout as apiLogout,
-  onAuthStateChange // Import Supabase auth state listener
+  onAuthStateChangeCallback // Use the renamed callback
 } from '@/lib/auth';
 import { useRouter, usePathname } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
@@ -17,22 +18,21 @@ interface AuthContextType {
   login: (email: string, pass: string) => Promise<AppUser | void>;
   register: (name: string, email: string, pass: string) => Promise<AppUser | void>;
   logout: () => Promise<void>;
-  isLoading: boolean; // General loading state for auth actions
-  isInitialLoading: boolean; // For initial auth check on app load
+  isLoading: boolean; 
+  isInitialLoading: boolean; 
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<AppUser | null>(null);
-  const [isLoading, setIsLoading] = useState(false); // For login/register/logout actions
-  const [isInitialLoading, setIsInitialLoading] = useState(true); // For the very first auth check
+  const [isLoading, setIsLoading] = useState(false); 
+  const [isInitialLoading, setIsInitialLoading] = useState(true); 
   const router = useRouter();
 
   useEffect(() => {
     let didUnsubscribe = false;
 
-    // Perform the initial check for an existing session
     setIsInitialLoading(true);
     apiGetCurrentUser()
       .then(currentUser => {
@@ -52,13 +52,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
       });
 
-    // Subscribe to subsequent auth state changes (login, logout)
-    const unsubscribeAuthState = onAuthStateChange((appUser) => {
+    const unsubscribeAuthState = onAuthStateChangeCallback((appUser) => { // Use the renamed callback
       if (!didUnsubscribe) {
-        // console.log("AuthContext: Auth state changed, new AppUser:", appUser);
         setUser(appUser);
-        // If an auth event occurs (login/logout), it means the initial loading phase is effectively over,
-        // or this is an update. Ensure isInitialLoading is false.
         if (isInitialLoading) {
             setIsInitialLoading(false);
         }
@@ -69,13 +65,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       didUnsubscribe = true;
       unsubscribeAuthState();
     };
-  }, []); // Empty dependency array: runs once on mount and cleans up on unmount
+  }, []); 
 
   const handleLogin = useCallback(async (email: string, pass: string) => {
     setIsLoading(true);
     try {
       const loggedInUser = await apiLogin(email, pass);
-      // setUser(loggedInUser) is handled by onAuthStateChange
       router.push('/dashboard');
       return loggedInUser;
     } catch (error) {
@@ -90,8 +85,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setIsLoading(true);
     try {
       const registeredUser = await apiRegister(name, email, pass);
-      // setUser(registeredUser) is handled by onAuthStateChange
-      router.push('/dashboard');
+      router.push('/dashboard'); // Consider redirecting to a "please verify email" page or dashboard
       return registeredUser;
     } catch (error) {
       console.error("Registration failed:", error);
@@ -105,7 +99,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setIsLoading(true);
     try {
       await apiLogout();
-      // setUser(null) is handled by onAuthStateChange
       router.push('/login');
     } catch (error) {
       console.error("Logout failed:", error);
@@ -136,35 +129,47 @@ export const ProtectedRoute = ({ children }: { children: ReactNode }) => {
   const pathname = usePathname();
 
   useEffect(() => {
+    // If initial load is done, and there's no user, and we are not on public auth pages
     if (!isInitialLoading && !user && pathname !== '/login' && pathname !== '/register') {
       router.replace('/login');
     }
+    // If initial load is done, and there IS a user, and we ARE on public auth pages
+    if (!isInitialLoading && user && (pathname === '/login' || pathname === '/register')) {
+       router.replace('/dashboard');
+    }
   }, [user, isInitialLoading, router, pathname]);
 
+
+  // While initial auth check is in progress, show a global loader
   if (isInitialLoading) {
     return (
-      <div className="flex h-screen w-screen items-center justify-center">
+      <div className="flex h-screen w-screen items-center justify-center bg-background">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
+        <p className="ml-3 text-lg text-foreground">Loading TaskZen...</p>
       </div>
     );
   }
 
-  if (!isInitialLoading && user && (pathname === '/login' || pathname === '/register')) {
-    router.replace('/dashboard');
-    return (
-       <div className="flex h-screen w-screen items-center justify-center">
+  // If after initial load, we are on a protected route without a user, show loader while redirecting
+  if (!user && pathname !== '/login' && pathname !== '/register') {
+     return (
+      <div className="flex h-screen w-screen items-center justify-center bg-background">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
+         <p className="ml-3 text-lg text-foreground">Redirecting...</p>
+      </div>
+    );
+  }
+  
+  // If user is logged in and tries to access login/register, show loader while redirecting
+  if (user && (pathname === '/login' || pathname === '/register')) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-background">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+        <p className="ml-3 text-lg text-foreground">Redirecting...</p>
       </div>
     );
   }
 
-  if (!isInitialLoading && !user && pathname !== '/login' && pathname !== '/register') {
-    return (
-      <div className="flex h-screen w-screen items-center justify-center">
-        <Loader2 className="h-12 w-12 animate-spin text-primary" />
-      </div>
-    );
-  }
 
   return <>{children}</>;
 };

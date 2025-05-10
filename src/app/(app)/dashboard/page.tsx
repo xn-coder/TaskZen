@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useState } from 'react';
@@ -13,9 +14,12 @@ import Link from 'next/link';
 import { useToast } from "@/hooks/use-toast";
 
 const handleEditTaskRedirect = (task: Task, router: ReturnType<typeof useRouter>) => {
-  const { toast } = useToast();
-  toast({ title: "Edit Action", description: `To edit '${task.title}', please go to the All Tasks page.`});
+  // For Firebase, edit page would be /tasks/edit/[taskId]
+  // This is a placeholder redirect for now.
+  const { toast } = useToast(); // This needs to be created here or passed
+  toast({ title: "Edit Action", description: `To edit '${task.title}', please go to the All Tasks page and find an edit button there.`});
 };
+
 
 export default function DashboardPage() {
   const { user, isInitialLoading: authContextLoading } = useAuth();
@@ -24,32 +28,37 @@ export default function DashboardPage() {
     createdTasks: [],
     overdueTasks: [],
   });
-  const [isFetchingTasks, setIsFetchingTasks] = useState(true); // Specific for task fetching
+  const [isFetchingTasks, setIsFetchingTasks] = useState(true);
   const router = useRouter();
   const { toast } = useToast();
 
   useEffect(() => {
-    // If auth is still loading, or no user yet, don't do anything here.
-    // ProtectedRoute and the initial checks below will handle UI.
-    if (authContextLoading || !user) {
-      setIsFetchingTasks(false); // Not fetching tasks if auth isn't ready
+    if (authContextLoading) {
+      setIsFetchingTasks(false);
       return;
     }
 
-    // At this point, authContextLoading is false, and user object exists.
-    // Now, check for profile.
+    if (!user) {
+      // This should ideally be caught by ProtectedRoute, but as a safeguard
+      setIsFetchingTasks(false);
+      router.replace('/login'); // Ensure redirection if somehow missed
+      return;
+    }
+    
+    // User exists, now check for profile.
+    // With Firebase, user.profile is populated after user object is available
+    // The `user` object from useAuth() is designed to include the profile.
+    // If `user.profile` is null here, it means it couldn't be fetched or doesn't exist.
     if (!user.profile) {
-      // Profile is not yet available. AuthContext might still be fetching it, or it failed.
-      // We don't start fetching tasks. The UI below will handle showing a message.
-      // This useEffect will re-run when `user` (and hopefully `user.profile`) updates.
-      setIsFetchingTasks(false); // Not fetching if profile is missing
+      // This indicates an issue fetching the profile from Firestore or profile creation failed.
+      setIsFetchingTasks(false); 
+      // The UI below handles showing a "Profile Not Loaded" message.
       return;
     }
 
     // User and profile are available. Fetch tasks.
-    // console.log("Dashboard: User and profile loaded, fetching tasks for user:", user.id);
     setIsFetchingTasks(true);
-    getDashboardTasks(user.id)
+    getDashboardTasks(user.uid) // Use user.uid for Firebase
       .then(data => {
         setDashboardTasks(data);
       })
@@ -68,7 +77,6 @@ export default function DashboardPage() {
      toast({ title: "Delete Action", description: `To delete tasks, please go to the All Tasks page.`});
   };
 
-  // 1. Handle Auth Loading
   if (authContextLoading) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -78,17 +86,13 @@ export default function DashboardPage() {
     );
   }
 
-  // 2. Auth is done, but no user (should be caught by ProtectedRoute, but as a fallback)
   if (!user) {
-    // This state indicates an issue if ProtectedRoute didn't redirect.
-    // For robustness, we can show a loader while redirecting.
-    // router.replace('/login'); // This might be too aggressive here, ProtectedRoute handles it.
-    return (
+     return (
        <div className="flex h-full flex-col items-center justify-center text-center p-6">
         <AlertTriangle className="h-16 w-16 text-destructive mb-4" />
-        <h2 className="text-xl font-semibold text-foreground mb-2">Authentication Issue</h2>
+        <h2 className="text-xl font-semibold text-foreground mb-2">Authentication Required</h2>
         <p className="text-muted-foreground mb-6">
-          User data is not available. You might be redirected to login.
+          Please log in to view your dashboard.
         </p>
         <Button onClick={() => router.push('/login')} variant="outline">
           Go to Login
@@ -97,20 +101,26 @@ export default function DashboardPage() {
     );
   }
 
-  // 3. Auth is done, user exists, but profile is missing.
   if (!user.profile) {
+    // This state implies user is authenticated but profile data is missing or failed to load
     return (
        <div className="flex h-full flex-col items-center justify-center text-center p-6">
         <AlertTriangle className="h-16 w-16 text-destructive mb-4" />
         <h2 className="text-xl font-semibold text-foreground mb-2">Profile Not Loaded</h2>
         <p className="text-muted-foreground mb-6 max-w-md">
-          Your profile information could not be loaded. This can happen if the 'profiles' table is missing in the database or if there are permission issues. Please ensure database migrations (especially `0001_setup_profiles.sql`) have been run. Refer to `README.md` for setup instructions.
+          Your profile information could not be loaded. This can happen if the profile document is missing in Firestore or if there are permission issues with Firestore rules. Please ensure your Firestore database is set up correctly and rules allow profile reads. Refer to `README.md` for setup instructions.
         </p>
         <div className="flex gap-2">
           <Button onClick={() => window.location.reload()} variant="outline">
             Refresh Page
           </Button>
-          <Button onClick={() => router.push('/login')} variant="default">
+           <Button onClick={async () => {
+            // Attempt to log out and redirect to login
+            try {
+              await useAuth().logout(); // This might be problematic if useAuth() is not stable here
+            } catch (e) { console.error(e); }
+            router.push('/login');
+          }} variant="default">
             Logout and Login Again
           </Button>
         </div>
@@ -118,7 +128,6 @@ export default function DashboardPage() {
     );
   }
   
-  // 4. User and profile are loaded. If tasks are still fetching, show task-specific loader.
   if (isFetchingTasks) {
      return (
       <div className="flex h-full items-center justify-center">
@@ -128,7 +137,6 @@ export default function DashboardPage() {
     );
   }
 
-  // All checks passed, data loaded (or failed gracefully). Render the dashboard.
   const renderTaskSection = (title: string, tasksToDisplay: Task[], IconComponent: React.ElementType, emptyMessage: string, EmptyIconComponent?: React.ElementType, viewAllLink?: string) => (
     <section className="mb-8">
       <div className="flex justify-between items-center mb-4">
@@ -170,7 +178,7 @@ export default function DashboardPage() {
   return (
     <div className="container mx-auto py-2">
       <div className="mb-8 p-6 bg-card rounded-lg shadow">
-        <h1 className="text-3xl font-bold text-foreground">Welcome back, {user.profile.name}!</h1>
+        <h1 className="text-3xl font-bold text-foreground">Welcome back, {user.profile.name || user.displayName || user.email}!</h1>
         <p className="text-muted-foreground">Here&apos;s a summary of your tasks.</p>
       </div>
 

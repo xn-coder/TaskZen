@@ -1,109 +1,161 @@
 
-import { supabase } from './supabaseClient';
+import { auth, db } from './firebase';
 import type { Profile } from './types';
-import type { User as SupabaseAuthUser, AuthError, SignUpWithPasswordCredentials } from '@supabase/supabase-js';
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut,
+  updateProfile as updateFirebaseProfile,
+  type User as FirebaseAuthUser,
+  type AuthError
+} from 'firebase/auth';
+import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 
-export interface AppUser extends SupabaseAuthUser {
+export interface AppUser extends FirebaseAuthUser {
   profile: Profile | null;
 }
 
-// Fetches both Supabase auth user and their public profile
-async function fetchUserWithProfile(authUser: SupabaseAuthUser | null): Promise<AppUser | null> {
-  if (!authUser) return null;
-
-  const { data: profile, error: profileError } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', authUser.id)
-    .single();
-
-  if (profileError && profileError.code !== 'PGRST116') { // PGRST116: single row not found (e.g. profile doesn't exist)
-    const userIdForLog = authUser.id || 'unknown user';
-    if (profileError.code === '42P01') { // Specific code for "undefined_table" or "relation does not exist"
-      console.error(`Error fetching profile for user ${userIdForLog}: The 'profiles' table does not exist. Code: ${profileError.code}, Message: ${profileError.message}. Please ensure the 'profiles' table is created in your database. Check migrations or Supabase SQL Editor. Full error:`, profileError);
-    } else if (typeof profileError === 'object' && profileError !== null && Object.keys(profileError).length === 0) {
-      // Log a more generic message for an empty error object, but mention it might be RLS/table/network
-      console.error(`Error fetching profile for user ${userIdForLog}: Received an empty error object {}. This could indicate a problem with RLS policies on the 'profiles' table, the table might not exist, or a network issue. Supabase error code: ${profileError.code || 'N/A'}, Message: ${profileError.message || 'N/A'}`);
-    } else if (typeof profileError === 'object' && profileError !== null) {
-      console.error(`Error fetching profile for user ${userIdForLog}: Code: ${profileError.code || 'N/A'}, Message: ${profileError.message || 'N/A'}. Full error:`, profileError);
+async function fetchUserProfile(uid: string): Promise<Profile | null> {
+  if (!uid) return null;
+  try {
+    const profileDocRef = doc(db, 'profiles', uid);
+    const profileSnap = await getDoc(profileDocRef);
+    if (profileSnap.exists()) {
+      return { id: profileSnap.id, ...profileSnap.data() } as Profile;
     } else {
-      // Handle cases where profileError might not be a standard Supabase error object
-      console.error(`Error fetching profile for user ${userIdForLog}: Non-object error:`, profileError);
+      console.warn(`No profile found for user UID: ${uid}`);
+      return null;
     }
-    // On any significant error fetching profile, return user with profile as null for graceful degradation.
-    return { ...authUser, profile: null };
+  } catch (error) {
+    console.error(`Error fetching profile for UID ${uid}:`, error);
+    return null; // Graceful degradation
   }
-  
-  // If profileError is null, or if it's PGRST116 (profile not found),
-  // then `profile` from `data` will be the profile object or null respectively.
-  // Supabase's .single() method with PGRST116 means `data` (profile) will be null.
-  return { ...authUser, profile: profile as Profile | null };
+}
+
+async function firebaseUserToAppUser(firebaseUser: FirebaseAuthUser | null): Promise<AppUser | null> {
+  if (!firebaseUser) return null;
+  const profile = await fetchUserProfile(firebaseUser.uid);
+  return {
+    ...firebaseUser,
+    // Manually copy over properties that might not be spread correctly or need type assertion
+    uid: firebaseUser.uid,
+    email: firebaseUser.email,
+    displayName: firebaseUser.displayName,
+    photoURL: firebaseUser.photoURL,
+    emailVerified: firebaseUser.emailVerified,
+    isAnonymous: firebaseUser.isAnonymous,
+    metadata: firebaseUser.metadata,
+    providerData: firebaseUser.providerData,
+    providerId: firebaseUser.providerId,
+    tenantId: firebaseUser.tenantId,
+    refreshToken: firebaseUser.refreshToken,
+    delete: firebaseUser.delete,
+    getIdToken: firebaseUser.getIdToken,
+    getIdTokenResult: firebaseUser.getIdTokenResult,
+    reload: firebaseUser.reload,
+    toJSON: firebaseUser.toJSON,
+    // End of manual copy
+    profile: profile,
+  };
 }
 
 
-export const getCurrentUser = async (): Promise<AppUser | null> => {
-  const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-  if (sessionError) {
-    console.error('Error getting session:', sessionError);
-    return null;
-  }
-  if (!session?.user) return null;
-  return fetchUserWithProfile(session.user);
+export const getCurrentUser = (): Promise<AppUser | null> => {
+  return new Promise((resolve, reject) => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      unsubscribe(); // Unsubscribe after first check
+      if (firebaseUser) {
+        try {
+          const appUser = await firebaseUserToAppUser(firebaseUser);
+          resolve(appUser);
+        } catch (error) {
+          console.error("Error processing current user:", error);
+          reject(error);
+        }
+      } else {
+        resolve(null);
+      }
+    }, (error) => {
+      unsubscribe();
+      console.error("Error in onAuthStateChanged for getCurrentUser:", error);
+      reject(error);
+    });
+  });
 };
 
 export const login = async (email: string, password: string): Promise<AppUser> => {
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error) throw error;
-  if (!data.user) throw new Error("Login failed, no user data returned.");
-  
-  const userWithProfile = await fetchUserWithProfile(data.user);
-  if (!userWithProfile) throw new Error("Login successful but failed to fetch profile.");
-  // It's possible userWithProfile.profile is null if fetchUserWithProfile encountered an issue or profile doesn't exist.
-  // The caller should handle cases where userWithProfile.profile might be null.
-  return userWithProfile;
+  try {
+    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    const appUser = await firebaseUserToAppUser(userCredential.user);
+    if (!appUser) throw new Error("Login successful but failed to process user data.");
+    return appUser;
+  } catch (error) {
+    console.error("Firebase login error:", error);
+    const authError = error as AuthError;
+    // Provide more user-friendly messages for common errors
+    if (authError.code === 'auth/user-not-found' || authError.code === 'auth/wrong-password' || authError.code === 'auth/invalid-credential') {
+      throw new Error("Invalid email or password. Please try again.");
+    }
+    throw new Error(authError.message || "An unknown login error occurred.");
+  }
 };
 
 export const register = async (name: string, email: string, password: string): Promise<AppUser> => {
-  const credentials: SignUpWithPasswordCredentials = {
-    email,
-    password,
-    options: {
-      data: {
-        name: name, // Store name in user_metadata, will be used to create profile by server-side trigger
-      }
+  try {
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    const firebaseUser = userCredential.user;
+
+    // Update Firebase Auth user profile with display name
+    await updateFirebaseProfile(firebaseUser, { displayName: name });
+
+    // Create user profile document in Firestore
+    const profileData: Omit<Profile, 'id'> = {
+      name: name,
+      email: firebaseUser.email || '', // email should exist
+      avatar_url: firebaseUser.photoURL || '', // Can be updated later
+      // Firebase Timestamps are handled by Firestore, not needed here.
+    };
+    const profileDocRef = doc(db, 'profiles', firebaseUser.uid);
+    await setDoc(profileDocRef, profileData);
+    
+    const appUser = await firebaseUserToAppUser(firebaseUser);
+    if (!appUser) throw new Error("Registration successful but failed to process user data.");
+    return appUser;
+  } catch (error) {
+    console.error("Firebase registration error:", error);
+    const authError = error as AuthError;
+     if (authError.code === 'auth/email-already-in-use') {
+      throw new Error("This email address is already in use. Please try another.");
     }
-  };
-  
-  const { data: authData, error: signUpError } = await supabase.auth.signUp(credentials);
-
-  if (signUpError) throw signUpError;
-  if (!authData.user) throw new Error("Registration failed, no user data returned.");
-
-  // Client-side profile insertion is now primarily handled by the server-side trigger 'on_auth_user_created'.
-  // The trigger uses 'name' and 'avatar_url' (if provided) from authData.user.raw_user_meta_data.
-  // We still fetch the userWithProfile to return it, which will reflect the profile created by the trigger.
-  
-  const userWithProfile = await fetchUserWithProfile(authData.user);
-   if (!userWithProfile) throw new Error("Registration successful but failed to fetch profile post-creation attempt.");
-  // As with login, userWithProfile.profile could be null if the trigger failed or there's a replication delay.
-  return userWithProfile;
+    throw new Error(authError.message || "An unknown registration error occurred.");
+  }
 };
 
 export const logout = async (): Promise<void> => {
-  const { error } = await supabase.auth.signOut();
-  if (error) throw error;
+  try {
+    await signOut(auth);
+  } catch (error) {
+    console.error("Firebase logout error:", error);
+    const authError = error as AuthError;
+    throw new Error(authError.message || "An unknown logout error occurred.");
+  }
 };
 
-// Listen to auth state changes
-export const onAuthStateChange = (callback: (user: AppUser | null) => void) => {
-  const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-    if (session?.user) {
-      const userWithProfile = await fetchUserWithProfile(session.user);
-      callback(userWithProfile);
+export const onAuthStateChangeCallback = (callback: (user: AppUser | null) => void) => {
+  return onAuthStateChanged(auth, async (firebaseUser) => {
+    if (firebaseUser) {
+      const appUser = await firebaseUserToAppUser(firebaseUser);
+      callback(appUser);
     } else {
       callback(null);
     }
+  }, (error) => {
+    console.error("Error in onAuthStateChanged subscription:", error);
+    callback(null); // Notify callback about the error state
   });
-  return () => subscription?.unsubscribe();
 };
 
+// Renaming onAuthStateChange to onAuthStateChangeCallback to avoid conflict with firebase/auth onAuthStateChanged
+// This exported function will be used in AuthContext.tsx
+export { onAuthStateChanged as firebaseOnAuthStateChanged } from 'firebase/auth';

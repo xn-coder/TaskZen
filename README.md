@@ -7,96 +7,119 @@ To get started, take a look at src/app/page.tsx.
 
 ## Environment Setup
 
-This application uses Supabase for its backend. To run the application locally, you need to set up Supabase environment variables.
+This application uses Firebase for its backend. To run the application locally, you need to set up Firebase environment variables.
 
 1.  **Create a `.env.local` file** in the root directory of your project.
-2.  **Add your Supabase credentials** to this file:
+2.  **Add your Firebase project configuration** to this file. It should look like this:
 
     ```env
-    NEXT_PUBLIC_SUPABASE_URL="YOUR_SUPABASE_URL"
-    NEXT_PUBLIC_SUPABASE_ANON_KEY="YOUR_SUPABASE_ANON_KEY"
+    NEXT_PUBLIC_FIREBASE_API_KEY="YOUR_API_KEY"
+    NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN="YOUR_AUTH_DOMAIN"
+    NEXT_PUBLIC_FIREBASE_PROJECT_ID="YOUR_PROJECT_ID"
+    NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET="YOUR_STORAGE_BUCKET"
+    NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID="YOUR_MESSAGING_SENDER_ID"
+    NEXT_PUBLIC_FIREBASE_APP_ID="YOUR_APP_ID"
+    # Optional: Only if you use Firebase Analytics
+    # NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID="YOUR_MEASUREMENT_ID"
     ```
 
-    Replace `"YOUR_SUPABASE_URL"` and `"YOUR_SUPABASE_ANON_KEY"` with your actual Supabase project URL and anon key. You can find these in your Supabase project settings (Project Settings > API).
+    Replace the placeholder values (`"YOUR_API_KEY"`, etc.) with your actual Firebase project's configuration.
 
-    **Important:** Ensure these variables start with `NEXT_PUBLIC_` to be accessible on the client-side by Next.js.
+    **How to find your Firebase project configuration:**
+    *   Go to your [Firebase Console](https://console.firebase.google.com/).
+    *   Select your project (or create one if you haven't).
+    *   In the project overview, click on the **Project settings** (gear icon) next to "Project Overview".
+    *   Under the **General** tab, scroll down to the "Your apps" section.
+    *   If you haven't registered a web app yet, click the web icon (`</>`) to add one. Follow the prompts.
+    *   Once you have a web app registered, find the "Firebase SDK snippet" section and select **Config**.
+    *   The configuration object shown there contains the values you need (`apiKey`, `authDomain`, `projectId`, etc.).
+    *   **Important:** Ensure these variables start with `NEXT_PUBLIC_` to be accessible on the client-side by Next.js.
 
 3.  **Restart your development server** if it's already running for the changes to take effect.
 
-With these variables set, the application should be able to connect to your Supabase instance.
+With these variables set, the application should be able to connect to your Firebase project.
 
-## Database Setup
+## Database Setup (Firestore)
 
-This application requires certain database tables and configurations to be present in your Supabase project.
+This application uses Firestore to store user profiles and tasks.
 
-### Initial Schema (Profiles Table and Tasks Table)
+### Firestore Rules
 
-If you are setting up the project for the first time, or if you encounter errors related to missing tables, such as:
-- `"relation 'public.profiles' does not exist"`
-- `"relation 'public.tasks' does not exist"`
-you need to apply the initial database schema.
+You need to set up Firestore security rules to allow users to read and write their own data. A basic set of rules might look like this. You should refine these for production use.
 
-The SQL for this is located in:
-- `supabase/migrations/0001_setup_profiles.sql` (for user profiles)
-- `supabase/migrations/0002_setup_tasks.sql` (for tasks)
+1.  Go to your [Firebase Console](https://console.firebase.google.com/).
+2.  Select your project.
+3.  Navigate to **Firestore Database** in the Build section of the sidebar.
+4.  Click on the **Rules** tab.
+5.  Replace the existing rules with something like the following:
 
-**How to apply SQL migrations:**
+    ```firestore.rules
+    rules_version = '2';
 
-1.  Navigate to your Supabase project dashboard.
-2.  Go to the **SQL Editor** section (usually found in the sidebar).
-3.  Click on **+ New query**.
-4.  Open the respective `.sql` migration file from the `supabase/migrations` directory in your project:
-    *   First, run `0001_setup_profiles.sql`.
-    *   Then, run `0002_setup_tasks.sql`.
-5.  Copy the entire content of the SQL file.
-6.  Paste the copied SQL into the Supabase SQL editor.
-7.  Click **RUN**.
-8.  Repeat for any other necessary migration files in their numerical order.
+    service cloud.firestore {
+      match /databases/{database}/documents {
 
-**The `0001_setup_profiles.sql` script will:**
-*   Create the `profiles` table, which stores user profile information linked to `auth.users`.
-*   Set up Row Level Security (RLS) policies for the `profiles` table, allowing users to manage their own profiles and making profiles publicly readable.
-*   Create a database trigger that automatically creates a new profile entry in `public.profiles` whenever a new user signs up via `auth.users`. This trigger attempts to populate the `name` and `avatar_url` from the `raw_user_meta_data` provided during sign-up.
+        // Profiles: Users can read any profile, but only write their own.
+        match /profiles/{userId} {
+          allow read: if true;
+          allow write: if request.auth != null && request.auth.uid == userId;
+        }
 
-**The `0002_setup_tasks.sql` script will:**
-*   Create the `tasks` table for managing tasks.
-*   Define necessary columns like `title`, `description`, `due_date`, `priority`, `status`, `assignee_id`, `created_by_id`.
-*   Set up foreign key relationships to the `profiles` table.
-*   Implement Row Level Security (RLS) policies for tasks, ensuring users can only access and modify tasks they are authorized to.
-*   Create a trigger to automatically update the `updated_at` timestamp for tasks.
+        // Tasks: Users can manage (create, read, update, delete) their own tasks.
+        // They can read tasks assigned to them or created by them.
+        match /tasks/{taskId} {
+          allow read: if request.auth != null && 
+                       (resource.data.assignee_id == request.auth.uid || resource.data.created_by_id == request.auth.uid || request.auth.uid in resource.data.viewers); // Example: if you add a viewers field
+          allow create: if request.auth != null && request.resource.data.created_by_id == request.auth.uid;
+          allow update, delete: if request.auth != null && resource.data.created_by_id == request.auth.uid;
+          // More granular update rules might be needed (e.g., assignee can update status)
+        }
+      }
+    }
+    ```
 
-**Note for existing users:** If you had users in your `auth.users` table *before* applying the `0001_setup_profiles.sql` script, their profiles will not be automatically created by the trigger for those pre-existing users. You may need to manually create profile entries for them or write a separate script to backfill this data. For new sign-ups *after* the script is run, profiles will be created automatically.
-Ensure these migrations are run in order to avoid foreign key constraint errors.
+    **Explanation:**
+    *   `profiles/{userId}`:
+        *   `allow read: if true;`: Anyone can read profiles (e.g., for assignee display names). Adjust if you need stricter privacy.
+        *   `allow write: if request.auth != null && request.auth.uid == userId;`: Only the authenticated user whose UID matches the document ID (`userId`) can create or update their own profile.
+    *   `tasks/{taskId}`:
+        *   `allow read`: Authenticated users can read tasks if they are the assignee or the creator.
+        *   `allow create`: Authenticated users can create tasks if the `created_by_id` in the new task data matches their own UID.
+        *   `allow update, delete`: Authenticated users can update or delete tasks if they were the creator. You might want to expand update permissions (e.g., allow assignees to change status).
 
-## Customizing Supabase Email Templates
+6.  Click **Publish**.
 
-### Including User's Full Name in Confirmation Email
+### Data Structure
 
-By default, the Supabase confirmation email might not include the user's full name. To personalize it, you can edit the email template directly in your Supabase project dashboard.
+*   **`profiles` collection:**
+    *   Each document ID is the Firebase `uid` of the user.
+    *   Fields: `name` (string), `email` (string), `avatar_url` (string, optional).
+*   **`tasks` collection:**
+    *   Each document has an auto-generated ID.
+    *   Fields: `title` (string), `description` (string), `due_date` (Timestamp), `priority` (string: "Low", "Medium", "High"), `status` (string: "To Do", "In Progress", "Done"), `assignee_id` (string, user UID, optional), `created_by_id` (string, user UID), `created_at` (Timestamp), `updated_at` (Timestamp).
 
-1.  **Ensure Name is Sent During Signup:**
-    The application is already configured to send the user's full name to Supabase during registration. This is done in `src/lib/auth.ts` by including the `name` in the `options.data` field of the `supabase.auth.signUp` call. This `name` is stored in the `raw_user_meta_data` of the `auth.users` table and is used by the `on_auth_user_created` trigger to populate the `profiles` table.
+When a user registers, a new document is created in the `profiles` collection using their UID as the document ID and storing their name and email.
 
-2.  **Modify the Supabase Email Template:**
-    *   Go to your Supabase project dashboard.
-    *   Navigate to **Authentication** (under the "Auth" section in the sidebar).
-    *   Click on the **Templates** tab.
-    *   Find the **Confirm signup** email template (it might also be labeled "Confirmation Mail" or similar).
-    *   Click to edit this template.
-    *   You can use Liquid templating syntax here. To include the user's full name (which was stored under the `name` key in `user_metadata` during signup), you can use the variable `{{ .User.UserMetadata.name }}`.
-    *   For example, you could change a generic greeting like:
+## Authentication
+
+Firebase Authentication is used for user sign-up and login. Email/password authentication is enabled by default when you set up Firebase.
+
+### Customizing Firebase Email Templates
+
+Firebase allows you to customize authentication emails (like verification, password reset) in the Firebase Console:
+
+1.  Go to your [Firebase Console](https://console.firebase.google.com/).
+2.  Select your project.
+3.  Navigate to **Authentication** (under the Build section).
+4.  Click on the **Templates** tab.
+5.  You can edit the email templates here. They use a simple templating language. For instance, to include the user's display name (which we set during registration), you might use `{{displayName}}`.
+    *   Example in the "Email address verification" template:
         ```html
-        <h2>Confirm your signup</h2>
-        <p>Follow this link to confirm your user:</p>
-        ```
-        to something more personal:
-        ```html
-        <h2>Confirm your signup, {{ .User.UserMetadata.name }}!</h2>
-        <p>Hey {{ .User.UserMetadata.name }},</p>
-        <p>Thanks for signing up. Please follow this link to confirm your user:</p>
-        ```
-    *   Make sure to use the correct path. If the `name` field was nested differently in `options.data` during `signUp`, adjust `{{ .User.UserMetadata.name }}` accordingly.
-    *   Save the changes to the template.
+        Hello {{displayName}},
 
-New users signing up should now receive a confirmation email that includes their full name, provided it's correctly passed during signup and the template uses the `{{ .User.UserMetadata.name }}` variable.
-```
+        Follow this link to verify your email address.
+        {{link}}
+        ```
+    Make sure your application provides the `displayName` to Firebase Auth when creating or updating a user profile if you want to use it in templates. The current `register` function in `src/lib/auth.ts` updates the Firebase user's `displayName`.
+
+By following these setup steps, your Next.js application should be correctly configured to use Firebase for authentication and Firestore for its database.
