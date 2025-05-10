@@ -1,6 +1,7 @@
 
 "use client";
 
+import * as React from 'react'; // Imported React for React.memo
 import type { Task } from "@/lib/types";
 import {
   Card,
@@ -23,7 +24,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useAuth } from "@/contexts/AuthContext";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 interface TaskCardProps {
@@ -47,7 +47,7 @@ const statusIcons: Record<Task["status"], React.ElementType> = {
 };
 
 
-export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
+const TaskCardComponent = ({ task, onEdit, onDelete, className }: TaskCardProps) => {
   const { user } = useAuth();
   const router = useRouter();
   const StatusIcon = statusIcons[task.status] || Zap;
@@ -59,12 +59,9 @@ export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
   }
 
   const canDelete = user?.uid === task.created_by_id;
-  const canEditTaskDetails = user?.uid === task.created_by_id; // Only creator can edit core details
-  const canUpdateStatus = user?.uid === task.created_by_id || (task.assignee_ids && task.assignee_ids.includes(user?.uid || ""));
-
+  const canEditTaskDetails = user?.uid === task.created_by_id; 
 
   const handleCardClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    // Prevent navigation if a button inside the card was clicked
     if ((e.target as HTMLElement).closest('button')) {
       return;
     }
@@ -157,7 +154,7 @@ export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
               <Button 
                 variant="outline" 
                 size="sm" 
-                onClick={(e) => { e.stopPropagation(); onEdit(task);}} // Stop propagation to prevent card click
+                onClick={(e) => { e.stopPropagation(); onEdit(task);}} 
                 disabled={!canEditTaskDetails}
                 aria-disabled={!canEditTaskDetails}
               >
@@ -179,7 +176,7 @@ export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
               <Button 
                 variant="destructive" 
                 size="sm" 
-                onClick={(e) => { e.stopPropagation(); onDelete(task.id);}} // Stop propagation
+                onClick={(e) => { e.stopPropagation(); onDelete(task.id);}} 
                 disabled={!canDelete}
                 aria-disabled={!canDelete}
               >
@@ -197,5 +194,6 @@ export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
     </Card>
     </TooltipProvider>
   );
-}
+};
 
+export const TaskCard = React.memo(TaskCardComponent);

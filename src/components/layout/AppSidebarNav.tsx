@@ -1,6 +1,7 @@
 
 "use client";
 
+import * as React from "react"; // Imported React for React.memo
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { NavItem } from "@/config/nav";
@@ -15,10 +16,10 @@ import {
 interface AppSidebarNavProps {
   items: NavItem[];
   isCollapsed?: boolean;
-  isMobile?: boolean; // To adjust behavior for mobile sheet
+  isMobile?: boolean; 
 }
 
-export function AppSidebarNav({ items, isCollapsed = false, isMobile = false }: AppSidebarNavProps) {
+const AppSidebarNavComponent = ({ items, isCollapsed = false, isMobile = false }: AppSidebarNavProps) => {
   const pathname = usePathname();
 
   if (!items?.length) {
@@ -28,7 +29,6 @@ export function AppSidebarNav({ items, isCollapsed = false, isMobile = false }: 
   let mostSpecificActiveHref = "";
   if (pathname) {
     for (const navItem of items) {
-      // Ensure navItem.href is not null or undefined before calling startsWith
       if (navItem.href && pathname.startsWith(navItem.href)) {
         if (navItem.href.length > mostSpecificActiveHref.length) {
           mostSpecificActiveHref = navItem.href;
@@ -37,11 +37,11 @@ export function AppSidebarNav({ items, isCollapsed = false, isMobile = false }: 
     }
   }
 
+
   return (
     <nav className={cn("grid gap-1 px-2", isMobile && "mt-2")}>
       {items.map((item, index) => {
         const Icon = item.icon;
-        // An item is active if its href is the most specific (longest) prefix match.
         const isActive = item.href === mostSpecificActiveHref;
 
         if (isCollapsed && !isMobile) {
@@ -104,5 +104,6 @@ export function AppSidebarNav({ items, isCollapsed = false, isMobile = false }: 
       })}
     </nav>
   );
-}
+};
 
+export const AppSidebarNav = React.memo(AppSidebarNavComponent);

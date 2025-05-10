@@ -4,7 +4,7 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import type { Task, TaskPriority, TaskStatus } from '@/lib/types';
 import { useAuth } from '@/contexts/AuthContext';
-import { deleteTask as apiDeleteTask } from '@/lib/taskService'; // getTasks removed
+import { deleteTask as apiDeleteTask } from '@/lib/taskService'; 
 import { TaskCard } from '@/components/tasks/TaskCard';
 import { TaskFilter } from '@/components/tasks/TaskFilter';
 import { TaskSearch } from '@/components/tasks/TaskSearch';
@@ -26,7 +26,6 @@ import {
 
 export default function TasksPage() {
   const { user, isInitialLoading: authLoading, realtimeTasks, areRealtimeTasksLoading } = useAuth();
-  // Removed local tasks state and isLoading state for fetching tasks
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname(); 
@@ -38,28 +37,14 @@ export default function TasksPage() {
     priority: [],
   });
 
-  // useEffect for fetching initial tasks is removed, using realtimeTasks from context
-
   const query = searchParams.get("query") || "";
   const initialFilterParam = searchParams.get("filter");
 
   useEffect(() => {
-    // This effect sets initial filters based on URL params (e.g., from dashboard links)
-    if (initialFilterParam && user?.uid && realtimeTasks.length > 0) { // Depend on realtimeTasks
+    if (initialFilterParam && user?.uid && realtimeTasks.length > 0) { 
       if (initialFilterParam === "overdue") {
          setFilters(prev => ({...prev, status: ['Overdue']}));
-      } else if (initialFilterParam === "assigned") {
-        // If you want to pre-filter based on "assigned" or "created" query params on this page,
-        // you might not need to. The filteredTasks memo will handle it if `initialFilterParam` logic is added there.
-        // For now, only "overdue" is explicitly set as a filter.
-        // "Assigned" and "Created" are used as a base list in filteredTasks.
       }
-      // Clear the 'filter' search param after applying it, so direct filtering works next.
-      // This is optional and depends on desired UX.
-      // const params = new URLSearchParams(searchParams.toString());
-      // params.delete("filter");
-      // router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-
     }
   }, [initialFilterParam, user, realtimeTasks.length, searchParams, router, pathname]); 
 
@@ -68,13 +53,11 @@ export default function TasksPage() {
     let tasksToFilter = [...realtimeTasks]; 
 
     if (user?.uid) {
-        // Apply dashboard-like pre-filtering if 'filter' param is present and not 'overdue' (handled by setFilters)
         if (initialFilterParam === "assigned") {
             tasksToFilter = tasksToFilter.filter(task => task.assignee_ids && task.assignee_ids.includes(user.uid!));
         } else if (initialFilterParam === "created") {
             tasksToFilter = tasksToFilter.filter(task => task.created_by_id === user.uid);
         }
-        // 'overdue' filter is handled by the `filters.status` state which is set by the useEffect above
     }
     
     return tasksToFilter
@@ -98,7 +81,6 @@ export default function TasksPage() {
         : [...currentFilterValues, value];
       return { ...prevFilters, [filterType]: newFilterValues as TaskStatus[] | TaskPriority[] };
     });
-    // Clear the 'filter' query param when user manually changes filters
     const params = new URLSearchParams(searchParams.toString());
     if (params.has("filter")) {
         params.delete("filter");
@@ -109,20 +91,27 @@ export default function TasksPage() {
   const clearFilters = useCallback(() => {
     setFilters({ status: [], priority: [] });
     const params = new URLSearchParams(searchParams.toString()); 
-    params.delete("filter"); // Ensure 'filter' from URL is also cleared
-    // query (search term) is handled by TaskSearch component itself, not cleared here by default
-    // If you want to clear search query too: params.delete("query");
+    params.delete("filter"); 
     router.replace(`${pathname}?${params.toString()}`, { scroll: false }); 
   }, [searchParams, router, pathname]);
 
 
-  const handleEditTask = (task: Task) => {
+  const handleEditTask = useCallback((task: Task) => {
     router.push(`/tasks/${task.id}/edit`);
-  };
+  }, [router]);
+
+  const handleDeleteRequest = useCallback((taskId: string) => {
+    const taskToDeleteRef = realtimeTasks.find(t => t.id === taskId);
+    if (taskToDeleteRef && user?.uid !== taskToDeleteRef.created_by_id) {
+       toast({ title: "Permission Denied", description: "Only the task creator can delete this task.", variant: "destructive"});
+       return;
+    }
+    setTaskToDelete(taskId);
+  }, [realtimeTasks, user, toast]);
+
 
   const confirmDeleteTask = async () => {
     if (!taskToDelete) return;
-    // Find from realtimeTasks as local 'tasks' state is removed
     const taskBeingDeleted = realtimeTasks.find(t => t.id === taskToDelete);
     if (!taskBeingDeleted) return;
 
@@ -134,8 +123,6 @@ export default function TasksPage() {
 
     try {
       await apiDeleteTask(taskToDelete); 
-      // No need to manually update local state, real-time listener will handle it.
-      // setTasks(prevTasks => prevTasks.filter(t => t.id !== taskToDelete));
       toast({ title: "Task Deleted", description: `"${taskBeingDeleted.title}" has been deleted.` });
     } catch (error: any) {
       toast({ title: "Error Deleting Task", description: error.message || "Could not delete task.", variant: "destructive" });
@@ -144,7 +131,6 @@ export default function TasksPage() {
     }
   };
 
-  // Combined loading state for auth and tasks
   if (authLoading || (user && areRealtimeTasksLoading)) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -153,11 +139,11 @@ export default function TasksPage() {
     );
   }
   
-  if (!user && !authLoading) { // If auth is done and no user, redirect (handled by ProtectedRoute, but good fallback)
+  if (!user && !authLoading) { 
      if (typeof window !== "undefined") router.replace('/login');
      return null; 
   }
-  if (!user) return null; // Should be caught by above or ProtectedRoute
+  if (!user) return null; 
 
   return (
     <div className="container mx-auto py-2">
@@ -188,14 +174,7 @@ export default function TasksPage() {
               key={task.id} 
               task={task} 
               onEdit={handleEditTask} 
-              onDelete={() => {
-                const taskToDeleteRef = realtimeTasks.find(t => t.id === task.id);
-                if (taskToDeleteRef && user?.uid !== taskToDeleteRef.created_by_id) {
-                   toast({ title: "Permission Denied", description: "Only the task creator can delete this task.", variant: "destructive"});
-                   return;
-                }
-                setTaskToDelete(task.id);
-              }}
+              onDelete={handleDeleteRequest}
             />
           ))}
         </div>

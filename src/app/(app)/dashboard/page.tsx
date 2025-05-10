@@ -1,11 +1,9 @@
 
 "use client";
 
-import { useEffect, useMemo } from 'react'; // Removed useState
+import { useEffect, useMemo, useCallback } from 'react'; // Added useCallback
 import type { Task } from '@/lib/types';
 import { useAuth } from '@/contexts/AuthContext';
-// getDashboardTasks might be removed if dashboard fully relies on realtimeTasks
-// import { getDashboardTasks } from '@/lib/taskService'; 
 import { TaskCard } from '@/components/tasks/TaskCard';
 import { Loader2, ListChecks, UserPlus, AlertOctagon, CheckSquare, AlertTriangle, Users } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -20,15 +18,13 @@ export default function DashboardPage() {
   const router = useRouter();
   const { toast } = useToast();
 
-  const handleEditTaskRedirect = (task: Task) => {
+  const handleEditTaskRedirect = useCallback((task: Task) => {
     router.push(`/tasks/${task.id}/edit`);
-  };
-
-  // No useEffect needed here for fetching tasks, as they come from AuthContext
-
-  const handleDeleteTaskPlaceholder = (taskId: string) => {
+  }, [router]);
+  
+  const handleDeleteTaskPlaceholder = useCallback((taskId: string) => {
      toast({ title: "Delete Action", description: `To delete tasks, please go to the All Tasks page.`});
-  };
+  }, [toast]);
   
   const dashboardData = useMemo(() => {
     if (!user || !user.uid || !realtimeTasks) return { assignedTasks: [], createdTasks: [], overdueTasks: [] };
@@ -41,9 +37,6 @@ export default function DashboardPage() {
     );
     const overdue = realtimeTasks.filter(task => task.status === 'Overdue');
     
-    // Ensure overdue tasks shown in the "Overdue" section are not also in "Assigned" or "Created" sections
-    // to avoid duplication if an active task becomes overdue.
-    // The current filtering logic (status !== 'Overdue') for assigned/created handles this.
     return { assignedTasks: assignedToUser, createdTasks: createdByUser, overdueTasks: overdue };
   }, [realtimeTasks, user]);
 
@@ -97,7 +90,6 @@ export default function DashboardPage() {
     );
   }
   
-  // This combines auth loading and task loading for the dashboard view
   if (user && areRealtimeTasksLoading && !authLoading) { 
      return (
       <div className="flex h-full items-center justify-center">
@@ -107,7 +99,7 @@ export default function DashboardPage() {
     );
   }
 
-  if (!user) { // Fallback if user becomes null after initial checks (e.g. during logout race condition)
+  if (!user) { 
     return (
       <div className="flex h-full items-center justify-center">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />

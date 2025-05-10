@@ -1,6 +1,7 @@
 
 "use client";
 
+import * as React from 'react'; // Imported React for React.memo
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -23,7 +24,7 @@ interface TaskFilterProps {
   onClearFilters: () => void;
 }
 
-export function TaskFilter({ appliedFilters, onFilterChange, onClearFilters }: TaskFilterProps) {
+const TaskFilterComponent = ({ appliedFilters, onFilterChange, onClearFilters }: TaskFilterProps) => {
   const activeFilterCount = appliedFilters.status.length + appliedFilters.priority.length;
 
   return (
@@ -74,4 +75,6 @@ export function TaskFilter({ appliedFilters, onFilterChange, onClearFilters }: T
       )}
     </div>
   );
-}
+};
+
+export const TaskFilter = React.memo(TaskFilterComponent);
