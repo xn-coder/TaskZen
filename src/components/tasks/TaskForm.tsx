@@ -1,3 +1,4 @@
+
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -29,7 +30,7 @@ import { format, parseISO, formatISO } from "date-fns";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, memo } from "react"; // Added memo
 import { addTask, updateTask, getProfilesForDropdown } from "@/lib/taskService";
 import type { AppUser } from "@/lib/auth"; 
 
@@ -52,6 +53,11 @@ interface TaskFormProps {
   isCreator?: boolean;
 }
 
+// Memoized components for assignees list
+const MemoizedCheckbox = memo(Checkbox);
+const MemoizedLabel = memo(Label);
+
+
 export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = false, isCreator = true }: TaskFormProps) {
   const { user: authUser } = useAuth();
   const router = useRouter();
@@ -61,10 +67,9 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
 
   useEffect(() => {
     async function fetchProfiles() {
-      if (!authUser) return; // Don't fetch if not logged in
+      if (!authUser) return; 
       try {
         const profiles = await getProfilesForDropdown();
-        // Filter out the current user from the list of assignable profiles
         setAllProfiles(profiles.filter(p => p.id !== authUser.id));
       } catch (error) {
         console.error("Failed to fetch profiles for dropdown:", error);
@@ -72,7 +77,8 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
       }
     }
     fetchProfiles();
-  }, [toast, authUser]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUser?.id]); // Changed dependency to authUser?.id
 
 
   const form = useForm<TaskFormValues>({
@@ -109,7 +115,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
             taskUpdatesPayload.priority = values.priority;
             taskUpdatesPayload.status = values.status;
             taskUpdatesPayload.assignee_ids = values.assignee_ids || [];
-        } else { // Non-creator can only update status and add comment
+        } else { 
             taskUpdatesPayload.status = values.status;
         }
         
@@ -131,7 +137,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
         };
         resultTask = await addTask(
           taskCreationPayload as Omit<Task, 'id' | 'created_at' | 'updated_at' | 'assignees' | 'created_by' | 'comments'> & { status: Exclude<TaskStatus, "Overdue">; created_by_id: string },
-          authUser.profile // Pass current user's profile
+          authUser.profile 
         );
       }
 
@@ -143,8 +149,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
       if (onSubmitSuccess) {
         onSubmitSuccess(resultTask);
       } else {
-        // router.push('/tasks'); 
-        router.push(`/tasks/${resultTask.id}`); // Redirect to the task detail page
+        router.push(`/tasks/${resultTask.id}`); 
       }
     } catch (error: any) {
       console.error("Failed to save task:", error);
@@ -293,7 +298,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
                       {allProfiles.length === 0 && <p className="text-sm text-muted-foreground p-2 text-center">No other users available to assign.</p>}
                       {allProfiles.map((profile) => (
                         <div key={profile.id} className="flex items-center space-x-2 p-1.5 hover:bg-accent rounded-md">
-                          <Checkbox
+                          <MemoizedCheckbox
                             id={`assignee-${profile.id}`}
                             checked={field.value?.includes(profile.id)}
                             onCheckedChange={(checked) => {
@@ -306,9 +311,9 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
                             }}
                             disabled={!canEditCoreFields || isSubmitting}
                           />
-                          <Label htmlFor={`assignee-${profile.id}`} className={cn("font-normal flex-1 cursor-pointer text-sm", (!canEditCoreFields || isSubmitting) && "cursor-not-allowed opacity-70")}>
+                          <MemoizedLabel htmlFor={`assignee-${profile.id}`} className={cn("font-normal flex-1 cursor-pointer text-sm", (!canEditCoreFields || isSubmitting) && "cursor-not-allowed opacity-70")}>
                             {profile.name || 'Unnamed User'} <span className="text-xs text-muted-foreground">({profile.email || 'No email'})</span>
-                          </Label>
+                          </MemoizedLabel>
                         </div>
                       ))}
                       </div>
@@ -358,3 +363,5 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
     </Form>
   );
 }
+
+    
