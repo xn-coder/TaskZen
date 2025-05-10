@@ -72,7 +72,7 @@ export default function TasksPage() {
       // This effect ensures that if URL has `filter=assigned` or `filter=created`,
       // those tasks are prioritized or shown. The `filteredTasks` memo will respect these.
     }
-  }, [initialFilterParam, user, tasks]); 
+  }, [initialFilterParam, user, tasks.length]); // Added tasks.length as a dependency
 
 
   const filteredTasks = useMemo(() => {
@@ -121,7 +121,13 @@ export default function TasksPage() {
 
 
   const handleEditTask = (task: Task) => {
-    toast({ title: "Edit Action", description: `Editing task: ${task.title}. (Edit page not implemented)`});
+    if (user?.uid !== task.created_by_id) {
+      toast({ title: "Permission Denied", description: `Only the creator can edit task: ${task.title}.`, variant: "destructive"});
+      return;
+    }
+    // Placeholder: Navigate to edit page or open edit modal
+    // router.push(`/tasks/${task.id}/edit`); // Example navigation
+    toast({ title: "Edit Action", description: `Editing task: ${task.title}. (Edit page/modal not implemented)`});
   };
 
   const confirmDeleteTask = async () => {
@@ -217,3 +223,4 @@ export default function TasksPage() {
     </div>
   );
 }
+

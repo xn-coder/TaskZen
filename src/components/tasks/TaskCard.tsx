@@ -22,6 +22,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface TaskCardProps {
   task: Task;
@@ -45,6 +46,7 @@ const statusIcons: Record<Task["status"], React.ElementType> = {
 
 
 export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
+  const { user } = useAuth();
   const StatusIcon = statusIcons[task.status] || Zap;
 
   const creatorName = task.created_by?.name || "Unknown Creator";
@@ -52,6 +54,8 @@ export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
   const getAvatarFallback = (name: string | undefined) => {
     return name ? name.charAt(0).toUpperCase() : 'U';
   }
+
+  const canEdit = user?.uid === task.created_by_id;
 
   return (
     <TooltipProvider>
@@ -130,9 +134,27 @@ export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
         )}
       </CardContent>
       <CardFooter className="flex justify-end space-x-2 border-t pt-4">
-        <Button variant="outline" size="sm" onClick={() => onEdit(task)}>
-          <Edit3 className="mr-1 h-4 w-4" /> Edit
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            {/* Span wrapper is necessary for Tooltip to work on disabled buttons */}
+            <span tabIndex={canEdit ? undefined : 0}> 
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => onEdit(task)}
+                disabled={!canEdit}
+                aria-disabled={!canEdit}
+              >
+                <Edit3 className="mr-1 h-4 w-4" /> Edit
+              </Button>
+            </span>
+          </TooltipTrigger>
+          {!canEdit && (
+            <TooltipContent>
+              <p>Only the task creator can edit this task.</p>
+            </TooltipContent>
+          )}
+        </Tooltip>
         <Button variant="destructive" size="sm" onClick={() => onDelete(task.id)}>
           <Trash2 className="mr-1 h-4 w-4" /> Delete
         </Button>
@@ -141,3 +163,4 @@ export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
     </TooltipProvider>
   );
 }
+
