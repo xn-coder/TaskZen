@@ -49,20 +49,16 @@ export default function TaskDetailPage() {
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
-  // Moved useMemo for sortedComments here, before any conditional returns
-  // This ensures hooks are called in the same order on every render.
   const sortedComments = useMemo(() => {
-    if (!task || !task.comments) { // Check if task or task.comments is null/undefined
+    if (!task || !task.comments) {
       return [];
     }
-    // Ensure to create a new array for sorting to avoid mutating the original state
     return [...task.comments].sort((a, b) => {
-        // Add defensive checks for createdAt if they can be invalid
         const dateA = a.createdAt ? parseISO(a.createdAt).getTime() : 0;
         const dateB = b.createdAt ? parseISO(b.createdAt).getTime() : 0;
         return dateB - dateA;
     });
-  }, [task]); // Dependency on the whole task object
+  }, [task]);
 
   const fetchTaskDetails = async () => {
     if (!taskId || !currentUser) return;
@@ -89,7 +85,6 @@ export default function TaskDetailPage() {
         throw { code: 'PGRST116', message: 'Task not found (no data returned).' };
       }
     } catch (e: any) {
-      setIsLoading(false);
       let uiError = "Failed to load task details.";
       let toastMessage = "An unexpected error occurred. Please try again.";
       let errorTitle = "Error Loading Task";
@@ -141,7 +136,7 @@ export default function TaskDetailPage() {
         variant: "destructive",
       });
     } finally {
-      if(isLoading) setIsLoading(false);
+      setIsLoading(false); // Ensure isLoading is always set to false after attempting to fetch
     }
   };
 
@@ -158,7 +153,7 @@ export default function TaskDetailPage() {
       setIsLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId, currentUser?.id, authLoading]); 
+  }, [taskId, currentUser?.id, authLoading]); // Use currentUser?.id for stability
 
 
   useEffect(() => {
@@ -174,7 +169,7 @@ export default function TaskDetailPage() {
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [realtimeTasks, taskId, task]); // Added 'task' to dependency array as selectedStatus depends on it
+  }, [realtimeTasks, taskId, task]);
 
 
   const handleAddComment = async () => {
@@ -255,7 +250,7 @@ export default function TaskDetailPage() {
     );
   }
 
-  if (!task) { // This check is now AFTER all hook calls
+  if (!task) {
     return (
       <div className="flex h-full items-center justify-center p-4 sm:p-8">
         <p className="text-base sm:text-lg text-muted-foreground">Task data is unavailable or being redirected.</p>
@@ -263,7 +258,6 @@ export default function TaskDetailPage() {
     );
   }
 
-  // These constants are defined after `task` is guaranteed to be non-null.
   const isCreator = currentUser?.id === task.created_by_id;
   const isAssignee = task.assignee_ids?.includes(currentUser?.id || "");
   const canUpdateStatusOrComment = isCreator || isAssignee;
