@@ -4,7 +4,7 @@
 import type { AppUser } from '@/lib/auth'; 
 import { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from 'react';
 import type { Session, PostgrestError } from '@supabase/supabase-js';
-import { supabase } from '@/lib/supabaseClient';
+import { supabase } from '@/lib/supabaseClient'; // Import supabase client directly
 import {
   getCurrentUser as apiGetCurrentUser,
   login as apiLogin,
@@ -15,9 +15,9 @@ import {
 import { useRouter, usePathname } from 'next/navigation';
 import { Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
 import type { Task } from '@/lib/types';
-import { onTasksUpdate } from '@/lib/taskService'; 
 import type { Database } from '@/lib/types/supabase';
-import { Button } from '@/components/ui/button';
+// Corrected import path for onTasksUpdate
+import { onTasksUpdate } from '@/lib/taskService';
 
 
 interface AuthContextType {
@@ -91,7 +91,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             setRealtimeTasks(data.tasks);
             setAreRealtimeTasksLoading(data.isLoading);
             if (data.error) {
-              console.error("Error from onTasksUpdate callback in AuthContext:", data.error);
+              const err = data.error as PostgrestError; // Assume PostgrestError structure for logging
+              console.error(
+                "Error from onTasksUpdate callback in AuthContext:",
+                `Message: ${err.message || 'N/A'}, Code: ${err.code || 'N/A'}, Details: ${err.details || 'N/A'}, Hint: ${err.hint || 'N/A'}. Raw object:`,
+                data.error // Log the raw object as well
+              );
               setRealtimeTasksError(data.error);
             } else {
               setRealtimeTasksError(null);
@@ -120,7 +125,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     try {
       const loggedInUser = await apiLogin(email, pass);
       // State updates are handled by onAuthStateChangeCallback
-      router.push('/dashboard'); // Redirect to dashboard after login
+      // router.push('/dashboard'); // Redirect is now handled in ProtectedRoute based on auth state changes
       return loggedInUser;
     } catch (error) {
       console.error("Login failed in AuthContext:", error);
@@ -128,7 +133,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     } finally {
       setIsLoading(false);
     }
-  }, [router]); 
+  }, []); // Removed router from dependencies as redirection is implicit
 
   const handleRegister = useCallback(async (name: string, email: string, pass: string) => {
     setIsLoading(true);
@@ -136,7 +141,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const registeredUser = await apiRegister(name, email, pass);
       // State updates are handled by onAuthStateChangeCallback
       // Toast message is handled in RegisterForm.tsx
-      router.push('/login'); // Redirect to login page after registration
+      router.push('/login'); // Explicitly redirect to login after successful registration initiation
       return registeredUser;
     } catch (error) {
       console.error("Registration failed in AuthContext:", error);
@@ -151,14 +156,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     try {
       await apiLogout();
       // State updates are handled by onAuthStateChangeCallback
-      router.push('/login'); // Explicit redirect after logout
+      // router.push('/login'); // Redirect is now handled in ProtectedRoute based on auth state changes
     } catch (error) {
       console.error("Logout failed in AuthContext:", error);
       throw error;
     } finally {
       setIsLoading(false);
     }
-  }, [router]);
+  }, []); // Removed router
 
   return (
     <AuthContext.Provider value={{ 
@@ -196,11 +201,16 @@ export const ProtectedRoute = ({ children }: { children: ReactNode }) => {
     if (!isInitialLoading) {
       setAuthChecked(true); 
       if (!user && !session) {
+        // If not authenticated and not on an auth page, redirect to login
         if (pathname !== '/login' && pathname !== '/register') {
           router.replace('/login');
         }
-      } else if (user && (pathname === '/login' || pathname === '/register')) {
-        router.replace('/dashboard');
+      } else if (user && session) {
+        // If authenticated and on an auth page, redirect to dashboard
+        if (pathname === '/login' || pathname === '/register') {
+          router.replace('/dashboard');
+        }
+        // If authenticated and profile is missing, this is handled by dashboard page or other specific pages
       }
     }
   }, [user, session, isInitialLoading, router, pathname]);
@@ -215,6 +225,7 @@ export const ProtectedRoute = ({ children }: { children: ReactNode }) => {
     );
   }
 
+  // If auth check is done, user is not authenticated, and current path is not an auth page, show redirecting message.
   if (authChecked && !user && !session && pathname !== '/login' && pathname !== '/register') {
      return (
       <div className="flex h-screen w-screen items-center justify-center bg-background">
@@ -224,7 +235,8 @@ export const ProtectedRoute = ({ children }: { children: ReactNode }) => {
     );
   }
   
-   if (authChecked && user && (pathname === '/login' || pathname === '/register')) {
+  // If auth check is done, user is authenticated, and current path IS an auth page, show redirecting message.
+   if (authChecked && user && session && (pathname === '/login' || pathname === '/register')) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-background">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -233,17 +245,17 @@ export const ProtectedRoute = ({ children }: { children: ReactNode }) => {
     );
   }
 
-  // Only show app-wide loading spinner if tasks are loading AND we are NOT on an auth page already
-  const showAppLoadingSpinner = user && areRealtimeTasksLoading && 
-                                  !pathname.startsWith('/auth') && 
-                                  pathname !== '/login' && 
-                                  pathname !== '/register';
+  // Only show app-wide loading spinner for tasks if user is logged in and tasks are loading,
+  // AND we are on a page that relies on these tasks (e.g., dashboard or tasks list).
+  const showAppTasksLoadingSpinner = user && areRealtimeTasksLoading && 
+                                  (pathname === '/dashboard' || pathname.startsWith('/tasks')) &&
+                                  !realtimeTasksError; // Don't show if there's already an error screen for tasks
 
-  if (showAppLoadingSpinner && pathname === '/dashboard') { // Specifically for dashboard
+  if (showAppTasksLoadingSpinner) { 
      return (
       <div className="flex h-screen w-screen items-center justify-center bg-background">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
-        <p className="ml-3 text-lg text-foreground">Loading dashboard tasks...</p>
+        <p className="ml-3 text-lg text-foreground">Loading tasks...</p>
       </div>
     );
   }
@@ -271,17 +283,21 @@ export const ProtectedRoute = ({ children }: { children: ReactNode }) => {
     );
   }
   
-  // If user is authenticated or on public auth pages, render children
+  // If user is authenticated or on public auth pages (and not being redirected), render children
+  // This condition means:
+  // 1. User is authenticated (user and session exist) OR
+  // 2. User is not authenticated BUT is on a public auth page (login/register)
   if ((user && session) || pathname === '/login' || pathname === '/register') {
-    // If tasks are still loading for non-dashboard pages, show children (page might have its own loader)
     return <>{children}</>;
   }
 
-  // Fallback for any other unhandled cases, though theoretically should be covered
+  // Fallback for any other unhandled cases, though theoretically should be covered by redirects.
+  // This could appear briefly if redirects haven't fully completed.
   return (
       <div className="flex h-screen w-screen items-center justify-center bg-background">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
-        <p className="ml-3 text-lg text-foreground">Please wait...</p>
+        <p className="ml-3 text-lg text-foreground">Verifying access...</p>
       </div>
   );
 };
+

@@ -31,7 +31,7 @@ const processTimestampsInDoc = (docData: any): any => {
 
 type TaskRowWithPossibleProfile = Partial<Database['public']['Tables']['tasks']['Row']> & { 
   id: string; 
-  created_by_profile?: Profile | null 
+  // created_by_profile is removed as direct join in realtime query was problematic
 };
 
 
@@ -48,8 +48,22 @@ export const processTask = async (
   const taskData = processTimestampsInDoc(taskDataFromDb);
   
   const now = new Date();
-  const dueDate = taskData.due_date ? parseISO(taskData.due_date) : new Date(0); 
-  const isOverdue = taskData.status !== 'Done' && taskData.due_date && isBefore(dueDate, now);
+  // Ensure due_date is parsed correctly; if it's invalid, isBefore might behave unexpectedly or error.
+  // A null due_date means it's not overdue by date.
+  let dueDateValid = false;
+  let parsedDueDate: Date | null = null;
+  if (taskData.due_date) {
+    try {
+      parsedDueDate = parseISO(taskData.due_date);
+      dueDateValid = !isNaN(parsedDueDate.getTime());
+    } catch (e) {
+      // console.warn(`Invalid due_date format for task ${taskData.id}: ${taskData.due_date}`);
+      dueDateValid = false;
+    }
+  }
+  
+  const isOverdue = taskData.status !== 'Done' && dueDateValid && parsedDueDate && isBefore(parsedDueDate, now);
+
 
   let assignees: Profile[] = [];
   if (taskData.assignee_ids && Array.isArray(taskData.assignee_ids)) {
@@ -61,7 +75,7 @@ export const processTask = async (
     }
   }
   
-  const createdByProfile = taskData.created_by_profile || (taskData.created_by_id ? profilesMap.get(taskData.created_by_id) : null);
+  const createdByProfile = taskData.created_by_id ? profilesMap.get(taskData.created_by_id) : null;
 
   const sortedComments = (taskData.comments || []).sort((a: Comment, b: Comment) => 
     parseISO(b.createdAt).getTime() - parseISO(a.createdAt).getTime()
@@ -101,6 +115,7 @@ export const getAllProfilesMap = async (): Promise<Map<string, Profile>> => {
 export const getTasks = async (userId?: string): Promise<Task[]> => {
   const profilesMap = await getAllProfilesMap();
   
+  // Fetch tasks without joining profiles directly in this main query, processTask will handle resolution
   let query = supabase.from('tasks').select('*').order('created_at', { ascending: false });
 
   if (userId) {
@@ -115,7 +130,7 @@ export const getTasks = async (userId?: string): Promise<Task[]> => {
   }
   if (!tasksData) return [];
 
-  const tasksPromises = tasksData.map(taskDoc => processTask(taskDoc, profilesMap));
+  const tasksPromises = tasksData.map(taskDoc => processTask(taskDoc as TaskRowWithPossibleProfile, profilesMap));
   return Promise.all(tasksPromises);
 };
 
@@ -123,17 +138,21 @@ export const getTasks = async (userId?: string): Promise<Task[]> => {
 export const getDashboardTasks = async (userId: string): Promise<{ assignedTasks: Task[], createdTasks: Task[], overdueTasks: Task[] }> => {
   const allUserTasks = await getTasks(userId); 
 
-  const assignedTasks = allUserTasks.filter(
-    task => task.assignee_ids && task.assignee_ids.includes(userId) && task.status !== 'Done' && task.status !== 'Overdue'
+  const assignedToUser = allUserTasks.filter(
+    task => task.assignee_ids && 
+            task.assignee_ids.includes(userId) &&
+            task.created_by_id === userId && // Filter for tasks also created by the user
+            task.status !== 'Done' && 
+            task.status !== 'Overdue'
   );
-  const createdTasks = allUserTasks.filter(
+  const createdByUser = allUserTasks.filter(
     task => task.created_by_id === userId && task.status !== 'Done' && task.status !== 'Overdue'
   );
   const overdueTasks = allUserTasks.filter(task => task.status === 'Overdue');
     
   return {
-    assignedTasks,
-    createdTasks,
+    assignedTasks: assignedToUser,
+    createdTasks: createdByUser,
     overdueTasks,
   };
 };
@@ -150,13 +169,13 @@ export const addTask = async (
     status: taskData.status, // This is Exclude<TaskStatus, "Overdue">
     assignee_ids: taskData.assignee_ids || null,
     created_by_id: taskData.created_by_id,
-    comments: [] as Comment[],
+    comments: [] as Comment[], // Initialize with empty comments
   };
 
   const { data, error } = await supabase
     .from('tasks')
     .insert(payloadToInsert)
-    .select()
+    .select() // Select all columns of the inserted row
     .single();
 
   if (error || !data) {
@@ -171,13 +190,15 @@ export const addTask = async (
         throw new Error('Failed to create task due to an unknown error.');
       }
     } else {
+      // This case should be less likely if .single() is used and insert is successful,
+      // but it's a safeguard.
       console.error(logMessage, "No data returned after insert, and no explicit error object.");
     }
     throw new Error(error?.message || 'Failed to create task or retrieve it after creation.');
   }
   
   const profilesMap = await getAllProfilesMap();
-  return processTask(data, profilesMap); 
+  return processTask(data as TaskRowWithPossibleProfile, profilesMap); 
 };
 
 
@@ -194,7 +215,15 @@ export const updateTask = async (
   delete updatePayload.id; 
 
   if (taskUpdates.due_date) {
-    updatePayload.due_date = parseISO(taskUpdates.due_date).toISOString();
+     // Ensure due_date is correctly formatted. If it's already a Date object, format it.
+    // If it's a string, ensure it's valid ISO before attempting to re-format or use directly.
+    try {
+      updatePayload.due_date = formatISO(parseISO(taskUpdates.due_date));
+    } catch(e) {
+      console.warn(`Invalid due_date provided for update: ${taskUpdates.due_date}. Using original value or nulling if invalid.`);
+      // Decide on fallback: use original string if Supabase can handle it, or nullify if it's truly bad
+      updatePayload.due_date = taskUpdates.due_date; // Or null if it must be ISO
+    }
   }
   
   if (newCommentText && newCommentText.trim() !== "" && currentUser && currentUser.id && currentUser.profile) {
@@ -224,10 +253,7 @@ export const updateTask = async (
     .from('tasks')
     .update(updatePayload)
     .eq('id', taskId)
-    .select(`
-      *,
-      created_by_profile:profiles!created_by_id (id, name, email, avatar_url)
-    `)
+    .select() // Select all columns after update
     .single();
 
   if (error) {
@@ -238,7 +264,7 @@ export const updateTask = async (
       throw new Error("Failed to update task or retrieve it after update.");
   }
   const profilesMap = await getAllProfilesMap();
-  return processTask(updatedTaskData, profilesMap);
+  return processTask(updatedTaskData as TaskRowWithPossibleProfile, profilesMap);
 };
 
 export const deleteTask = async (taskId: string): Promise<void> => {
@@ -281,19 +307,40 @@ export const onTasksUpdate = (
     try {
       const profilesMap = await getAllProfilesMap();
       
+      // Removed the problematic join: created_by_profile:profiles!tasks_created_by_id_fkey(...)
+      // Profile resolution will happen in processTask using profilesMap
       const { data: tasksData, error } = await supabaseClient
         .from('tasks')
-        .select(`
-          *,
-          created_by_profile:profiles!created_by_id(id, name, email, avatar_url)
-        `)
-        .or(`created_by_id.eq.${userId},assignee_ids.cs.{${userId}}`)
+        .select(`*`) 
+        .or(`created_by_id.eq.${userId},assignee_ids.cs.{${userId}}`) // Ensure this uses the correct column name if it was assignee_id
         .order('created_at', { ascending: false });
 
       if (error) {
         let logMessage = `Error fetching tasks for real-time update for userId: ${userId}.`;
-        console.error(logMessage, error); // Log the error object itself
-        callback({ tasks: [], isLoading: false, error });
+        let processedError: PostgrestError;
+
+        if (typeof error === 'object' && error !== null && Object.keys(error).length === 0 && !(error as PostgrestError).message) {
+          console.warn(`${logMessage} Received an empty error object from Supabase. Original error:`, error);
+          processedError = {
+            message: "An empty or unspecific error object was received from Supabase while fetching tasks.",
+            code: "SUPABASE_EMPTY_ERROR",
+            details: "The error object from Supabase lacked standard properties like 'message' or 'code'. This could indicate a network connectivity issue, a problem with Row Level Security (RLS) policies preventing data access, or an internal Supabase error.",
+            hint: "Check your network connection, Supabase project status, and RLS policies for the 'tasks' table. Ensure the user has SELECT permissions."
+          } as PostgrestError;
+        } else if (error && typeof error === 'object' && 'message' in error) {
+          console.error(logMessage, error); // Log the original detailed error
+          processedError = error as PostgrestError;
+        } else {
+          console.error(logMessage + " Encountered an unexpected error type:", error);
+          processedError = {
+            message: "An unexpected error occurred while fetching tasks.",
+            code: "UNKNOWN_TASK_FETCH_ERROR",
+            details: String(error), // Convert to string if not already
+            hint: "Review console logs for more specific details."
+          } as PostgrestError;
+        }
+        
+        callback({ tasks: [], isLoading: false, error: processedError });
         return;
       }
 
@@ -303,6 +350,7 @@ export const onTasksUpdate = (
       callback({ tasks: processedTasks, isLoading: false, error: null });
     } catch (e: any) {
       const logMessage = `Exception in fetchAndProcessTasks for userId: ${userId}.`;
+      let processedError: PostgrestError;
       if (e && typeof e === 'object' && 'message' in e) {
          const pgError = e as PostgrestError;
          console.error(
@@ -310,15 +358,21 @@ export const onTasksUpdate = (
           `Message: ${pgError.message || 'N/A'}, Code: ${pgError.code || 'N/A'}, Details: ${pgError.details || 'N/A'}, Hint: ${pgError.hint || 'N/A'}. Raw error:`,
           e 
         );
-        callback({ tasks: [], isLoading: false, error: pgError });
+        processedError = pgError;
       } else {
         console.error(logMessage, "Unknown error structure:", e);
-        callback({ tasks: [], isLoading: false, error: { message: "Unknown error occurred", code: "UNKNOWN", details: "", hint: "" } as PostgrestError });
+        processedError = { 
+            message: e.message || "Unknown exception occurred during task processing.", 
+            code: "PROCESSING_EXCEPTION", 
+            details: String(e), 
+            hint: "Check console for details." 
+        } as PostgrestError;
       }
+      callback({ tasks: [], isLoading: false, error: processedError });
     }
   };
 
-  fetchAndProcessTasks();
+  fetchAndProcessTasks(); // Initial fetch
 
   channel = supabaseClient
     .channel(`public:tasks:user-${userId}`)
@@ -326,7 +380,8 @@ export const onTasksUpdate = (
       'postgres_changes',
       { event: '*', schema: 'public', table: 'tasks' },
       (payload) => {
-        fetchAndProcessTasks();
+        // console.log('Realtime change received for tasks:', payload);
+        fetchAndProcessTasks(); // Re-fetch and process on any change
       }
     )
     .subscribe((status, err) => {
@@ -335,7 +390,18 @@ export const onTasksUpdate = (
       }
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
         console.error(`Realtime channel error for user ${userId}:`, status, err);
-        // Optionally, try to resubscribe or notify user
+        let channelError : PostgrestError;
+        if (err && typeof err === 'object' && 'message' in err) {
+            channelError = err as PostgrestError;
+        } else {
+            channelError = {
+                message: `Realtime channel ${status}`,
+                code: status,
+                details: err ? String(err) : "No specific error details from channel.",
+                hint: "Check network or Supabase realtime status."
+            } as PostgrestError;
+        }
+        callback({ tasks: [], isLoading: false, error: channelError});
       }
     });
   
