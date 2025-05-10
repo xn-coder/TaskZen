@@ -22,7 +22,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Label } from "@/components/ui/label";
-import type { Task, Profile, TaskStatus, TaskPriority, Comment } from "@/lib/types";
+import type { Task, Profile, TaskStatus, TaskPriority } from '@/lib/types'; // Using AppTask as Task
 import { TASK_EDITABLE_STATUSES, TASK_PRIORITIES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { CalendarIcon, Loader2, ChevronDown } from "lucide-react";
@@ -32,7 +32,7 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { useState, useEffect, useMemo } from "react";
 import { addTask, updateTask, getProfilesForDropdown } from "@/lib/taskService";
-import type { AppUser } from "@/lib/auth";
+import type { AppUser } from "@/lib/auth"; // Supabase AppUser
 
 const taskFormSchema = z.object({
   title: z.string().min(3, "Title must be at least 3 characters."),
@@ -41,7 +41,7 @@ const taskFormSchema = z.object({
   priority: z.enum(TASK_PRIORITIES as [TaskPriority, ...TaskPriority[]]),
   status: z.enum(TASK_EDITABLE_STATUSES as [Exclude<TaskStatus, "Overdue">, ...Exclude<TaskStatus, "Overdue">[]]),
   assignee_ids: z.array(z.string()).optional().default([]),
-  newCommentText: z.string().optional(), // New field for adding a comment
+  newCommentText: z.string().optional(),
 });
 
 type TaskFormValues = z.infer<typeof taskFormSchema>;
@@ -74,9 +74,8 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
   }, [toast]);
 
   const assignableProfiles = useMemo(() => {
-    if (!authUser || !authUser.uid) return allProfiles;
-    // Filter out the current authenticated user from the list of assignable profiles
-    return allProfiles.filter(profile => profile.id !== authUser.uid);
+    if (!authUser || !authUser.id) return allProfiles;
+    return allProfiles.filter(profile => profile.id !== authUser.id);
   }, [allProfiles, authUser]);
 
 
@@ -91,12 +90,12 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
               ? initialData.status as Exclude<TaskStatus, "Overdue"> 
               : "To Do",
       assignee_ids: initialData?.assignee_ids || [],
-      newCommentText: "", // Initialize comment text
+      newCommentText: "",
     },
   });
 
   async function onSubmit(values: TaskFormValues) {
-    if (!authUser || !authUser.uid) { 
+    if (!authUser || !authUser.id) { 
       toast({ title: "Error", description: "You must be logged in to perform this action.", variant: "destructive"});
       return;
     }
@@ -105,7 +104,6 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
     try {
       let resultTask: Task;
       if (isEditing && initialData) {
-        // Prepare payload for updateTask based on permissions
         const taskUpdatesPayload: Partial<Omit<Task, 'id' | 'created_at' | 'updated_at' | 'assignees' | 'created_by' | 'comments'>> = {};
         
         if (isCreator) {
@@ -116,25 +114,27 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
             taskUpdatesPayload.status = values.status;
             taskUpdatesPayload.assignee_ids = values.assignee_ids || [];
         } else {
-            // Non-creator can only update status (and add comment via newCommentText)
             taskUpdatesPayload.status = values.status;
         }
         
         resultTask = await updateTask(initialData.id, taskUpdatesPayload, values.newCommentText, authUser);
 
-      } else { // Creating a new task
+      } else { 
+        // Ensure status is of the correct type for new tasks (not "Overdue")
+        const validStatus = TASK_EDITABLE_STATUSES.includes(values.status as Exclude<TaskStatus, "Overdue">) 
+                            ? values.status as Exclude<TaskStatus, "Overdue">
+                            : "To Do";
+
         const taskCreationPayload = {
             title: values.title,
             description: values.description || "",
             due_date: formatISO(values.due_date),
             priority: values.priority,
-            status: values.status, // status for new task
+            status: validStatus,
             assignee_ids: values.assignee_ids || [],
-            created_by_id: authUser.uid,
+            created_by_id: authUser.id,
         };
-        // Explicitly type to match addTask signature (excluding comments from initial add, handled by service)
         resultTask = await addTask(taskCreationPayload as Omit<Task, 'id' | 'created_at' | 'updated_at' | 'assignees' | 'created_by' | 'comments'> & { status: Exclude<TaskStatus, "Overdue">; created_by_id: string });
-        // Note: newCommentText is not used for new tasks in this structure, could be added if needed.
       }
 
       toast({
@@ -171,7 +171,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
             <FormItem>
               <FormLabel>Title</FormLabel>
               <FormControl>
-                <Input placeholder="E.g., Finalize project report" {...field} disabled={!canEditCoreFields} />
+                <Input placeholder="E.g., Finalize project report" {...field} disabled={!canEditCoreFields || isSubmitting} />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -184,7 +184,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
             <FormItem>
               <FormLabel>Description (Optional)</FormLabel>
               <FormControl>
-                <Textarea placeholder="Add more details about the task..." {...field} value={field.value ?? ""} rows={4} disabled={!canEditCoreFields} />
+                <Textarea placeholder="Add more details about the task..." {...field} value={field.value ?? ""} rows={4} disabled={!canEditCoreFields || isSubmitting} />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -206,7 +206,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
                           "pl-3 text-left font-normal",
                           !field.value && "text-muted-foreground"
                         )}
-                        disabled={!canEditCoreFields}
+                        disabled={!canEditCoreFields || isSubmitting}
                       >
                         {field.value ? format(field.value, "PPP") : <span>Pick a date</span>}
                         <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
@@ -233,7 +233,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Priority</FormLabel>
-                <Select onValueChange={field.onChange} defaultValue={field.value} disabled={!canEditCoreFields}>
+                <Select onValueChange={field.onChange} defaultValue={field.value} disabled={!canEditCoreFields || isSubmitting}>
                   <FormControl>
                     <SelectTrigger>
                       <SelectValue placeholder="Select priority" />
@@ -281,7 +281,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
                 <FormLabel>Assign To</FormLabel>
                 <Popover>
                   <PopoverTrigger asChild>
-                    <Button variant="outline" className="w-full justify-start text-left font-normal" disabled={!canEditCoreFields}>
+                    <Button variant="outline" className="w-full justify-start text-left font-normal" disabled={!canEditCoreFields || isSubmitting}>
                       {field.value && field.value.length > 0
                         ? `${field.value.length} user(s) selected`
                         : "Select assignees"}
@@ -305,10 +305,10 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
                                 form.setValue("assignee_ids", currentIds.filter(id => id !== profile.id));
                               }
                             }}
-                            disabled={!canEditCoreFields}
+                            disabled={!canEditCoreFields || isSubmitting}
                           />
-                          <Label htmlFor={`assignee-${profile.id}`} className={cn("font-normal flex-1 cursor-pointer text-sm", !canEditCoreFields && "cursor-not-allowed opacity-70")}>
-                            {profile.name} <span className="text-xs text-muted-foreground">({profile.email})</span>
+                          <Label htmlFor={`assignee-${profile.id}`} className={cn("font-normal flex-1 cursor-pointer text-sm", (!canEditCoreFields || isSubmitting) && "cursor-not-allowed opacity-70")}>
+                            {profile.name || 'Unnamed User'} <span className="text-xs text-muted-foreground">({profile.email || 'No email'})</span>
                           </Label>
                         </div>
                       ))}

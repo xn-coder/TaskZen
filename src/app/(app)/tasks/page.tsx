@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
-import type { Task, TaskPriority, TaskStatus } from '@/lib/types';
+import type { Task, TaskPriority, TaskStatus } from '@/lib/types'; // Using AppTask as Task
 import { useAuth } from '@/contexts/AuthContext';
 import { deleteTask as apiDeleteTask } from '@/lib/taskService'; 
 import { TaskCard } from '@/components/tasks/TaskCard';
@@ -41,10 +41,12 @@ export default function TasksPage() {
   const initialFilterParam = searchParams.get("filter");
 
   useEffect(() => {
-    if (initialFilterParam && user?.uid && realtimeTasks.length > 0) { 
+    // Apply initial filter from URL param 'filter' (e.g. for "Overdue" from dashboard link)
+    if (initialFilterParam && user?.id && realtimeTasks.length > 0) { 
       if (initialFilterParam === "overdue") {
          setFilters(prev => ({...prev, status: ['Overdue']}));
       }
+       // Note: "assigned" and "created" are handled directly in filteredTasks memo due to dependency on user.id
     }
   }, [initialFilterParam, user, realtimeTasks.length, searchParams, router, pathname]); 
 
@@ -52,11 +54,11 @@ export default function TasksPage() {
   const filteredTasks = useMemo(() => {
     let tasksToFilter = [...realtimeTasks]; 
 
-    if (user?.uid) {
+    if (user?.id) {
         if (initialFilterParam === "assigned") {
-            tasksToFilter = tasksToFilter.filter(task => task.assignee_ids && task.assignee_ids.includes(user.uid!));
+            tasksToFilter = tasksToFilter.filter(task => task.assignee_ids && task.assignee_ids.includes(user.id!));
         } else if (initialFilterParam === "created") {
-            tasksToFilter = tasksToFilter.filter(task => task.created_by_id === user.uid);
+            tasksToFilter = tasksToFilter.filter(task => task.created_by_id === user.id);
         }
     }
     
@@ -81,6 +83,7 @@ export default function TasksPage() {
         : [...currentFilterValues, value];
       return { ...prevFilters, [filterType]: newFilterValues as TaskStatus[] | TaskPriority[] };
     });
+    // Clear the 'filter' URL param if manual filters are applied, as it's for initial state
     const params = new URLSearchParams(searchParams.toString());
     if (params.has("filter")) {
         params.delete("filter");
@@ -91,8 +94,8 @@ export default function TasksPage() {
   const clearFilters = useCallback(() => {
     setFilters({ status: [], priority: [] });
     const params = new URLSearchParams(searchParams.toString()); 
-    params.delete("filter");
-    params.delete("query"); // Also clear query when clearing filters
+    params.delete("filter"); // Remove initial filter param
+    if (params.has("query")) params.delete("query"); // Also clear query when clearing filters
     router.replace(`${pathname}?${params.toString()}`, { scroll: false }); 
   }, [searchParams, router, pathname]);
 
@@ -103,7 +106,7 @@ export default function TasksPage() {
 
   const handleDeleteRequest = useCallback((taskId: string) => {
     const taskToDeleteRef = realtimeTasks.find(t => t.id === taskId);
-    if (taskToDeleteRef && user?.uid !== taskToDeleteRef.created_by_id) {
+    if (taskToDeleteRef && user?.id !== taskToDeleteRef.created_by_id) {
        toast({ title: "Permission Denied", description: "Only the task creator can delete this task.", variant: "destructive"});
        return;
     }
@@ -114,9 +117,9 @@ export default function TasksPage() {
   const confirmDeleteTask = async () => {
     if (!taskToDelete) return;
     const taskBeingDeleted = realtimeTasks.find(t => t.id === taskToDelete);
-    if (!taskBeingDeleted) return;
+    if (!taskBeingDeleted) return; // Should not happen if taskToDelete is set
 
-    if (user?.uid !== taskBeingDeleted.created_by_id) {
+    if (user?.id !== taskBeingDeleted.created_by_id) {
       toast({ title: "Permission Denied", description: "Only the task creator can delete this task.", variant: "destructive"});
       setTaskToDelete(null);
       return;
@@ -125,6 +128,7 @@ export default function TasksPage() {
     try {
       await apiDeleteTask(taskToDelete); 
       toast({ title: "Task Deleted", description: `"${taskBeingDeleted.title}" has been deleted.` });
+      // RealtimeTasks should update automatically via Supabase Realtime subscription in AuthContext
     } catch (error: any) {
       toast({ title: "Error Deleting Task", description: error.message || "Could not delete task.", variant: "destructive" });
     } finally {
@@ -136,15 +140,17 @@ export default function TasksPage() {
     return (
       <div className="flex h-full items-center justify-center">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
+        <p className="ml-3 text-lg text-foreground">Loading tasks...</p>
       </div>
     );
   }
   
   if (!user && !authLoading) { 
+     // This should be handled by ProtectedRoute
      if (typeof window !== "undefined") router.replace('/login');
      return null; 
   }
-  if (!user) return null; 
+  if (!user) return null; // Should not be reached if ProtectedRoute is working
 
   return (
     <div className="container mx-auto py-2">
@@ -219,4 +225,3 @@ export default function TasksPage() {
     </div>
   );
 }
-

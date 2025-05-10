@@ -44,10 +44,13 @@ export function RegisterForm() {
     try {
       await register(values.name, values.email, values.password);
        toast({
-        title: "Registration Successful",
-        description: "Welcome to TaskZen! You can now log in.",
+        title: "Registration Initiated",
+        description: "Please check your email to confirm your account.", // Updated message for Supabase flow
       });
-      // Redirect is handled by AuthContext
+      // Redirect is handled by AuthContext, or user stays to see "confirm email" message
+      // For Supabase, user might not be fully "logged in" until email confirmation.
+      // Consider redirecting to a page that says "Please check your email".
+      // For now, AuthContext will likely redirect to dashboard if session exists, even if unconfirmed.
     } catch (error: any) {
       toast({
         title: "Registration Failed",

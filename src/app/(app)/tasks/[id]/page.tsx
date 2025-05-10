@@ -5,11 +5,10 @@ import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from "@/hooks/use-toast";
-import { getDoc, doc, updateDoc, arrayUnion, serverTimestamp, Timestamp } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
-import type { Task, Profile, Comment, TaskStatus } from '@/lib/types';
+import { supabase } from '@/lib/supabaseClient';
+import type { Task, Profile, Comment, TaskStatus } from '@/lib/types'; // Using AppTask as Task
 import { TASK_EDITABLE_STATUSES } from '@/lib/constants';
-import { processTask, getAllProfilesMap } from '@/lib/taskService'; 
+import { processTask, getAllProfilesMap, updateTask as apiUpdateTask, deleteTask as apiDeleteTask } from '@/lib/taskService'; 
 import { Loader2, AlertTriangle, CalendarDays, Users, Tag, MessageSquare, Send, Edit, Trash2, UserCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
@@ -30,7 +29,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { deleteTask as apiDeleteTask } from '@/lib/taskService';
 import { cn } from '@/lib/utils';
 
 export default function TaskDetailPage() {
@@ -55,12 +53,26 @@ export default function TaskDetailPage() {
     if (!taskId || !currentUser) return;
     setIsLoading(true);
     try {
-      const taskDocRef = doc(db, 'tasks', taskId);
-      const taskSnap = await getDoc(taskDocRef);
+      const { data: taskDataFromDb, error: fetchError } = await supabase
+        .from('tasks')
+        .select(`
+          *,
+          created_by_id:profiles!tasks_created_by_id_fkey (
+            id, name, email, avatar_url
+          )
+        `) // Fetch created_by profile directly
+        .eq('id', taskId)
+        .single();
 
-      if (taskSnap.exists()) {
-        const profilesMap = await getAllProfilesMap();
-        const processedTask = await processTask(taskSnap, profilesMap);
+      if (fetchError) throw fetchError;
+      
+      if (taskDataFromDb) {
+        const profilesMap = await getAllProfilesMap(); // Still needed for assignees
+        // Temporary cast for created_by_id if it's fetched as an object
+        const taskWithPotentialProfileObject = { ...taskDataFromDb, created_by_id: (taskDataFromDb.created_by_id as any)?.id || taskDataFromDb.created_by_id };
+
+        const processedTask = await processTask(taskWithPotentialProfileObject as any, profilesMap);
+
         setTask(processedTask);
         setSelectedStatus(processedTask.status === 'Overdue' ? 'To Do' : processedTask.status); 
       } else {
@@ -68,10 +80,16 @@ export default function TaskDetailPage() {
         toast({ title: "Error", description: "The requested task could not be found.", variant: "destructive" });
         router.replace('/tasks');
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Error fetching task details:", e);
-      setError("Failed to load task details.");
-      toast({ title: "Error", description: "Failed to load task details. Please try again.", variant: "destructive" });
+      if (e.code === 'PGRST116') { // Supabase code for "Resource not found"
+         setError("Task not found.");
+         toast({ title: "Error", description: "The requested task could not be found.", variant: "destructive" });
+         router.replace('/tasks');
+      } else {
+        setError("Failed to load task details.");
+        toast({ title: "Error", description: e.message || "Failed to load task details. Please try again.", variant: "destructive" });
+      }
     } finally {
       setIsLoading(false);
     }
@@ -97,47 +115,29 @@ export default function TaskDetailPage() {
     if (taskId && realtimeTasks && realtimeTasks.length > 0) {
       const contextTask = realtimeTasks.find(t => t.id === taskId);
       if (contextTask) {
+        // Check if task from context is different from current task state to avoid infinite loops
         if (JSON.stringify(task) !== JSON.stringify(contextTask)) {
-          setTask(contextTask);
-          if (contextTask.status !== selectedStatus && (contextTask.status !== 'Overdue' || selectedStatus === 'Overdue')) {
-            setSelectedStatus(contextTask.status === 'Overdue' ? 'To Do' : contextTask.status);
-          }
-        }
-      } else {
-        if (task) { 
-            if (!isLoading) {
+            setTask(contextTask);
+            if (contextTask.status !== selectedStatus && (contextTask.status !== 'Overdue' || selectedStatus === 'Overdue')) {
+                setSelectedStatus(contextTask.status === 'Overdue' ? 'To Do' : contextTask.status);
             }
         }
       }
     }
-  }, [realtimeTasks, taskId, task, isLoading, selectedStatus]); 
+  }, [realtimeTasks, taskId, task, selectedStatus]); // Added task and selectedStatus to dependencies
 
 
   const handleAddComment = async () => {
     if (!newComment.trim() || !currentUser || !task) return;
     setIsSubmittingComment(true);
     try {
-      const commentToAdd: Comment = {
-        userId: currentUser.uid,
-        userName: currentUser.profile?.name || currentUser.displayName || "User",
-        text: newComment.trim(),
-        createdAt: new Date().toISOString(), 
-      };
-      const taskDocRef = doc(db, 'tasks', task.id);
-      await updateDoc(taskDocRef, {
-        comments: arrayUnion(commentToAdd),
-        updated_at: serverTimestamp(),
-      });
-      setTask(prevTask => prevTask ? ({
-        ...prevTask,
-        comments: [...(prevTask.comments || []), commentToAdd].sort((a, b) => parseISO(b.createdAt).getTime() - parseISO(a.createdAt).getTime()),
-        updated_at: new Date().toISOString(), 
-      }) : null);
+      const updatedTask = await apiUpdateTask(task.id, {}, newComment.trim(), currentUser);
+      setTask(updatedTask); // Update with the full task from the service
       setNewComment("");
       toast({ title: "Comment Added", description: "Your comment has been posted." });
-    } catch (e) {
+    } catch (e: any) {
       console.error("Error adding comment:", e);
-      toast({ title: "Error", description: "Failed to add comment.", variant: "destructive" });
+      toast({ title: "Error", description: e.message || "Failed to add comment.", variant: "destructive" });
     } finally {
       setIsSubmittingComment(false);
     }
@@ -153,25 +153,21 @@ export default function TaskDetailPage() {
 
     setIsUpdatingStatus(true);
     try {
-        const taskDocRef = doc(db, 'tasks', task.id);
-        await updateDoc(taskDocRef, {
-            status: newStatus,
-            updated_at: serverTimestamp(),
-        });
-        setTask(prev => prev ? ({ ...prev, status: newStatus, updated_at: new Date().toISOString() }) : null);
+        const updatedTask = await apiUpdateTask(task.id, { status: newStatus as Exclude<TaskStatus, "Overdue"> }, undefined, currentUser);
+        setTask(updatedTask);
         setSelectedStatus(newStatus);
         toast({ title: "Status Updated", description: `Task status changed to ${newStatus}.` });
-    } catch (e) {
+    } catch (e: any) {
         console.error("Error updating status:", e);
-        toast({ title: "Error", description: "Failed to update task status.", variant: "destructive" });
+        toast({ title: "Error", description: e.message || "Failed to update task status.", variant: "destructive" });
         setSelectedStatus(task.status === 'Overdue' ? 'To Do' : task.status); 
     } finally {
         setIsUpdatingStatus(false);
     }
   };
 
-  const handleDeleteTask = async () => {
-    if (!task || !currentUser || currentUser.uid !== task.created_by_id) {
+  const handleDeleteTaskAction = async () => { // Renamed to avoid conflict
+    if (!task || !currentUser || currentUser.id !== task.created_by_id) {
       toast({ title: "Permission Denied", description: "Only the task creator can delete this task.", variant: "destructive" });
       setShowDeleteConfirm(false);
       return;
@@ -218,8 +214,8 @@ export default function TaskDetailPage() {
     );
   }
 
-  const isCreator = currentUser?.uid === task.created_by_id;
-  const isAssignee = task.assignee_ids?.includes(currentUser?.uid || "");
+  const isCreator = currentUser?.id === task.created_by_id;
+  const isAssignee = task.assignee_ids?.includes(currentUser?.id || "");
   const canUpdateStatusOrComment = isCreator || isAssignee;
 
   const priorityColors: Record<Task["priority"], string> = {
@@ -261,7 +257,7 @@ export default function TaskDetailPage() {
                   <div key={index} className="flex items-start space-x-3">
                     <Avatar className="h-6 w-6 sm:h-8 sm:w-8 mt-1">
                        <AvatarImage src={`https://avatar.vercel.sh/${comment.userId}.png`} alt={comment.userName} data-ai-hint="profile avatar" />
-                       <AvatarFallback>{comment.userName.charAt(0).toUpperCase()}</AvatarFallback>
+                       <AvatarFallback>{comment.userName ? comment.userName.charAt(0).toUpperCase() : 'U'}</AvatarFallback>
                     </Avatar>
                     <div className="flex-1 bg-muted/50 p-2 sm:p-3 rounded-lg">
                       <div className="flex justify-between items-center">
@@ -345,7 +341,7 @@ export default function TaskDetailPage() {
                 <h4 className="text-sm sm:text-md font-semibold mb-2 text-muted-foreground">Created By</h4>
                 <div className="flex items-center space-x-2">
                   <Avatar className="h-6 w-6 sm:h-8 sm:w-8">
-                     <AvatarImage src={task.created_by.avatar_url || `https://avatar.vercel.sh/${task.created_by.email || task.created_by.id}.png`} alt={task.created_by.name} data-ai-hint="profile avatar" />
+                     <AvatarImage src={task.created_by.avatar_url || `https://avatar.vercel.sh/${task.created_by.email || task.created_by.id}.png`} alt={task.created_by.name || 'User'} data-ai-hint="profile avatar" />
                      <AvatarFallback>{task.created_by.name ? task.created_by.name.charAt(0).toUpperCase() : 'U'}</AvatarFallback>
                   </Avatar>
                   <span className="text-xs sm:text-sm text-foreground">{task.created_by.name || 'Unknown User'}</span>
@@ -363,7 +359,7 @@ export default function TaskDetailPage() {
                   {task.assignees.map(assignee => (
                     <div key={assignee.id} className="flex items-center space-x-2">
                       <Avatar className="h-6 w-6 sm:h-8 sm:w-8">
-                        <AvatarImage src={assignee.avatar_url || `https://avatar.vercel.sh/${assignee.email || assignee.id}.png`} alt={assignee.name} data-ai-hint="profile avatar"/>
+                        <AvatarImage src={assignee.avatar_url || `https://avatar.vercel.sh/${assignee.email || assignee.id}.png`} alt={assignee.name || 'User'} data-ai-hint="profile avatar"/>
                         <AvatarFallback>{assignee.name ? assignee.name.charAt(0).toUpperCase() : 'U'}</AvatarFallback>
                       </Avatar>
                       <span className="text-xs sm:text-sm text-foreground">{assignee.name || 'Unknown User'}</span>
@@ -392,7 +388,7 @@ export default function TaskDetailPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteTask} className="bg-destructive hover:bg-destructive/90 text-destructive-foreground">
+            <AlertDialogAction onClick={handleDeleteTaskAction} className="bg-destructive hover:bg-destructive/90 text-destructive-foreground">
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -401,4 +397,3 @@ export default function TaskDetailPage() {
     </div>
   );
 }
-

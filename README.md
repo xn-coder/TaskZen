@@ -1,199 +1,118 @@
 
-# Firebase Studio
+# TaskZen - Powered by Supabase & Next.js
 
-This is a NextJS starter in Firebase Studio.
+This is a Next.js starter application for TaskZen, a task management tool, using Supabase for its backend.
 
-To get started, take a look at src/app/page.tsx.
+To get started, take a look at `src/app/page.tsx`.
 
 ## Environment Setup
 
-This application uses Firebase for its backend. To run the application locally, you need to set up Firebase environment variables.
+This application uses Supabase for its backend. To run the application locally, you need to set up Supabase environment variables.
 
 1.  **Create a `.env.local` file** in the root directory of your project.
-2.  **Add your Firebase project configuration** to this file. It should look like this:
+2.  **Add your Supabase project configuration** to this file. It should look like this:
 
     ```env
-    NEXT_PUBLIC_FIREBASE_API_KEY="YOUR_API_KEY"
-    NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN="YOUR_AUTH_DOMAIN"
-    NEXT_PUBLIC_FIREBASE_PROJECT_ID="YOUR_PROJECT_ID"
-    NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET="YOUR_STORAGE_BUCKET"
-    NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID="YOUR_MESSAGING_SENDER_ID"
-    NEXT_PUBLIC_FIREBASE_APP_ID="YOUR_APP_ID"
-    # Optional: Only if you use Firebase Analytics
-    # NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID="YOUR_MEASUREMENT_ID"
-    
-    # Optional: For Firebase Emulators (if you use them)
-    # Ensure these match your firebase.json emulator settings
-    # NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST="localhost:9099" 
-    # NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST="localhost"
-    # NEXT_PUBLIC_FIRESTORE_EMULATOR_PORT="8080"
-    # NEXT_PUBLIC_STORAGE_EMULATOR_HOST="localhost"
-    # NEXT_PUBLIC_STORAGE_EMULATOR_PORT="9199"
+    NEXT_PUBLIC_SUPABASE_URL="YOUR_SUPABASE_URL"
+    NEXT_PUBLIC_SUPABASE_ANON_KEY="YOUR_SUPABASE_ANON_KEY"
     ```
 
-    Replace the placeholder values (`"YOUR_API_KEY"`, etc.) with your actual Firebase project's configuration.
+    Replace `"YOUR_SUPABASE_URL"` and `"YOUR_SUPABASE_ANON_KEY"` with your actual Supabase project's API URL and anon (public) key.
 
-    **How to find your Firebase project configuration:**
-    *   Go to your [Firebase Console](https://console.firebase.google.com/).
+    **How to find your Supabase project configuration:**
+    *   Go to your [Supabase Dashboard](https://app.supabase.io).
     *   Select your project (or create one if you haven't).
-    *   In the project overview, click on the **Project settings** (gear icon) next to "Project Overview".
-    *   Under the **General** tab, scroll down to the "Your apps" section.
-    *   If you haven't registered a web app yet, click the web icon (`</>`) to add one. Follow the prompts.
-    *   Once you have a web app registered, find the "Firebase SDK snippet" section and select **Config**.
-    *   The configuration object shown there contains the values you need (`apiKey`, `authDomain`, `projectId`, etc.).
+    *   In the project sidebar, navigate to **Project Settings** (the gear icon).
+    *   Under **API**, you will find your **Project URL** (this is `NEXT_PUBLIC_SUPABASE_URL`) and the **Project API keys** section. Use the `anon` `public` key for `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
     *   **Important:** Ensure these variables start with `NEXT_PUBLIC_` to be accessible on the client-side by Next.js.
 
-3.  **Restart your development server** if it's already running for the changes to take effect.
+3.  **Restart your development server** if it's already running for the changes to take effect (`npm run dev` or `yarn dev`).
 
-With these variables set, the application should be able to connect to your Firebase project.
+With these variables set, the application should be able to connect to your Supabase project.
 
-## Database Setup (Firestore)
+## Database Setup (Supabase - PostgreSQL)
 
-This application uses Firestore to store user profiles and tasks.
+This application uses Supabase's PostgreSQL database to store user profiles and tasks. You'll need to run SQL migrations to set up the tables and Row Level Security (RLS) policies.
 
-### Firestore Rules
+### Migrations
 
-You need to set up Firestore security rules to allow users to read and write their own data. A basic set of rules might look like this. You should refine these for production use.
+The necessary SQL migration files are located in the `supabase/migrations` directory.
 
-1.  Go to your [Firebase Console](https://console.firebase.google.com/).
-2.  Select your project.
-3.  Navigate to **Firestore Database** in the Build section of the sidebar.
-4.  Click on the **Rules** tab.
-5.  Replace the existing rules with something like the following:
+1.  **Using Supabase CLI (Recommended for local development & CI/CD):**
+    *   Install the Supabase CLI: `npm install supabase --save-dev` (or globally).
+    *   Link your local project to your Supabase project: `npx supabase login`, then `npx supabase link --project-ref YOUR_PROJECT_REF`. Find `YOUR_PROJECT_REF` in your Supabase project's dashboard URL (e.g., `https://app.supabase.io/project/YOUR_PROJECT_REF`).
+    *   Apply migrations: `npx supabase db push`.
 
-    ```firestore.rules
-    rules_version = '2';
+2.  **Manual Setup via Supabase Dashboard (Alternative):**
+    *   Go to your [Supabase Dashboard](https://app.supabase.io) and select your project.
+    *   Navigate to the **SQL Editor** in the sidebar.
+    *   Click **+ New query**.
+    *   Open each SQL file from the `supabase/migrations` directory in your project (e.g., `0000_create_profiles_table.sql`, `0001_create_tasks_table.sql`).
+    *   Copy the entire content of one SQL file.
+    *   Paste the copied SQL into the Supabase SQL editor and click **RUN**.
+    *   Repeat for all migration files in chronological order.
 
-    service cloud.firestore {
-      match /databases/{database}/documents {
+### Included Migration Files:
 
-        // Profiles: Users can read any profile, but only write their own.
-        match /profiles/{userId} {
-          allow read: if request.auth != null; // Allow authenticated users to read profiles (e.g., for assignee display names)
-          allow create: if request.auth != null && request.auth.uid == userId; // User can create their own profile
-          allow update: if request.auth != null && request.auth.uid == userId; // User can update their own profile
-          // No delete rule for profiles for now, can be added if needed
-        }
+*   **`supabase/migrations/0000_create_profiles_table.sql`**: Sets up the `profiles` table to store user-specific information.
+*   **`supabase/migrations/0001_create_tasks_table.sql`**: Sets up the `tasks` table for task management.
+*   **(Future migrations for comments, etc., would go here)**
 
-        // Tasks:
-        match /tasks/{taskId} {
-          // Users can read tasks if they are the creator or an assignee.
-          allow read: if request.auth != null && 
-                       (resource.data.created_by_id == request.auth.uid || 
-                        request.auth.uid in resource.data.assignee_ids);
-          
-          // Users can create tasks if the created_by_id matches their UID.
-          allow create: if request.auth != null && 
-                         request.resource.data.created_by_id == request.auth.uid &&
-                         // Ensure required fields are present on create
-                         request.resource.data.title != null &&
-                         request.resource.data.due_date != null &&
-                         request.resource.data.priority != null &&
-                         request.resource.data.status != null &&
-                         request.resource.data.assignee_ids is list && 
-                         request.resource.data.comments is list && // Ensure comments is a list (can be empty)
-                         request.resource.data.keys().hasAll(['title', 'description', 'due_date', 'priority', 'status', 'assignee_ids', 'created_by_id', 'created_at', 'updated_at', 'comments']);
+### Data Structure (Defined by Migrations)
 
+*   **`profiles` table:**
+    *   `id` (uuid, primary key, references `auth.users.id`)
+    *   `name` (text)
+    *   `email` (text, unique)
+    *   `avatar_url` (text, nullable)
+    *   `created_at` (timestamptz, default `now()`)
+    *   `updated_at` (timestamptz, default `now()`)
+*   **`tasks` table:**
+    *   `id` (uuid, primary key, default `gen_random_uuid()`)
+    *   `title` (text, not null)
+    *   `description` (text)
+    *   `due_date` (timestamptz)
+    *   `priority` (text, e.g., "Low", "Medium", "High", not null)
+    *   `status` (text, e.g., "To Do", "In Progress", "Done", not null)
+    *   `assignee_ids` (array of uuid, nullable)
+    *   `created_by_id` (uuid, not null, references `auth.users.id`)
+    *   `created_at` (timestamptz, default `now()`)
+    *   `updated_at` (timestamptz, default `now()`)
+    *   `comments` (jsonb, nullable, default `'[]'::jsonb`)
 
-          // Update permissions:
-          // - The creator can update any field they are allowed to set during creation (plus comments).
-          // - Any assignee can update ONLY the 'status' field and add 'comments'.
-          allow update: if request.auth != null && (
-                          // Creator can update most fields
-                          (resource.data.created_by_id == request.auth.uid &&
-                           request.resource.data.keys().hasOnly(['title', 'description', 'due_date', 'priority', 'status', 'assignee_ids', 'comments', 'updated_at']) &&
-                           // Validate comment structure if comments are being updated by creator
-                           (
-                             !('comments' in request.resource.data.diff(resource.data).affectedKeys()) || // if comments not changed, this is fine
-                             (
-                               request.resource.data.comments.size() >= resource.data.comments.size() && // Allow adding or no change
-                               (request.resource.data.comments.size() == 0 || // Empty array is fine
-                                (request.resource.data.comments.size() > 0 && 
-                                 request.resource.data.comments[request.resource.data.comments.size() -1].userId == request.auth.uid &&
-                                 request.resource.data.comments[request.resource.data.comments.size() -1].text is string &&
-                                 request.resource.data.comments[request.resource.data.comments.size() -1].userName is string &&
-                                 request.resource.data.comments[request.resource.data.comments.size() -1].createdAt is string 
-                                ))
-                             )
-                           )
-                          ) ||
-                          // Assignee can update only status and comments
-                          (
-                            (request.auth.uid in resource.data.assignee_ids) &&
-                            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'comments', 'updated_at']) &&
-                            // Validate comment structure if comments are being updated by assignee
-                            (
-                             !('comments' in request.resource.data.diff(resource.data).affectedKeys()) || // if comments not changed, this is fine
-                             (
-                               request.resource.data.comments.size() == resource.data.comments.size() + 1 && // Must be an append of one comment
-                               request.resource.data.comments[request.resource.data.comments.size() -1].userId == request.auth.uid &&
-                               request.resource.data.comments[request.resource.data.comments.size() -1].text is string &&
-                               request.resource.data.comments[request.resource.data.comments.size() -1].userName is string &&
-                               request.resource.data.comments[request.resource.data.comments.size() -1].createdAt is string 
-                             )
-                           )
-                          )
-                        );
-          
-          // Only the creator can delete the task.
-          allow delete: if request.auth != null && resource.data.created_by_id == request.auth.uid;
-        }
-      }
-    }
-    ```
+### Row Level Security (RLS)
 
-    **Explanation of Task Rules:**
-    *   **`read`**: Authenticated users can read tasks if they are the creator or listed in `assignee_ids`.
-    *   **`create`**: Authenticated users can create tasks if the `created_by_id` in the new task data matches their own UID, all required fields are present, and `comments` is initialized as a list (typically empty).
-    *   **`update`**:
-        *   If the user is the creator, they can update `title`, `description`, `due_date`, `priority`, `status`, `assignee_ids`, and `comments`. The rule for `comments` ensures that if the comments array is modified, new entries are valid and by the current user.
-        *   If the user is an assignee, they can update *only* the `status` field and append to the `comments` array. The rule ensures only `status`, `comments`, and `updated_at` (server-set) are affected, and that if `comments` are changed, it's an append of one valid comment by the current user.
-    *   **`delete`**: Only the authenticated user who is the creator can delete the task.
+RLS policies are defined within the migration SQL files. They ensure that users can only access and modify data they are permitted to. For example:
+*   Users can read their own profile and insert their own profile.
+*   Users can update their own profile.
+*   Users can create tasks.
+*   Users can read tasks they created or are assigned to.
+*   Users can update tasks based on their role (creator or assignee).
+*   Only creators can delete tasks.
 
-6.  Click **Publish**.
-
-### Data Structure
-
-*   **`profiles` collection:**
-    *   Each document ID is the Firebase `uid` of the user.
-    *   Fields: `name` (string), `email` (string), `avatar_url` (string, optional).
-*   **`tasks` collection:**
-    *   Each document has an auto-generated ID.
-    *   Fields:
-        *   `title` (string)
-        *   `description` (string, can be empty)
-        *   `due_date` (Timestamp)
-        *   `priority` (string: "Low", "Medium", "High")
-        *   `status` (string: "To Do", "In Progress", "Done") - "Overdue" is a client-side calculated status.
-        *   `assignee_ids` (array of strings, user UIDs, can be empty)
-        *   `created_by_id` (string, user UID)
-        *   `created_at` (Timestamp, set by server)
-        *   `updated_at` (Timestamp, set by server)
-        *   `comments` (array of maps, each map: `{ userId: string, userName: string, text: string, createdAt: Timestamp/string }`) - Can be empty.
-
-When a user registers, a new document is created in the `profiles` collection using their UID as the document ID and storing their name and email.
+**Make sure RLS is enabled for your tables in the Supabase dashboard (Authentication > Policies).** The migrations should enable them, but it's good to verify.
 
 ## Authentication
 
-Firebase Authentication is used for user sign-up and login. Email/password authentication is enabled by default when you set up Firebase.
+Supabase Authentication is used for user sign-up and login. Email/password authentication is enabled by default.
 
-### Customizing Firebase Email Templates
+### Customizing Supabase Email Templates
 
-Firebase allows you to customize authentication emails (like verification, password reset) in the Firebase Console:
+Supabase allows you to customize authentication emails (like confirmation, password reset) in your Supabase project dashboard:
 
-1.  Go to your [Firebase Console](https://console.firebase.google.com/).
+1.  Go to your [Supabase Dashboard](https://app.supabase.io/).
 2.  Select your project.
-3.  Navigate to **Authentication** (under the Build section).
-4.  Click on the **Templates** tab.
-5.  You can edit the email templates here. They use a simple templating language. For instance, to include the user's display name (which we set during registration), you might use `{{displayName}}`.
-    *   Example in the "Email address verification" template:
+3.  Navigate to **Authentication** (under the Auth section in the sidebar), then go to the **Templates** tab.
+4.  You can edit the email templates here. They use Liquid templating. For instance, to include the user's email, you might use `{{ .Email }}`. To use user metadata like `name` (which we store in the `profiles` table and can be synced to `auth.users.user_metadata`), you might use `{{ .UserMetaData.name }}`.
+    *   Example in the "Confirm signup" template:
         ```html
-        Hello {{displayName}},
+        <h2>Confirm your signup</h2>
 
-        Follow this link to verify your email address.
-        {{link}}
+        <p>Hello {{ .UserMetaData.name | default: .Email }},</p> <!-- Use name if available, else email -->
+
+        <p>Follow this link to confirm your user:</p>
+        <p><a href="{{ .ConfirmationURL }}">Confirm your mail</a></p>
         ```
-    Make sure your application provides the `displayName` to Firebase Auth when creating or updating a user profile if you want to use it in templates. The current `register` function in `src/lib/auth.ts` updates the Firebase user's `displayName`.
+    Make sure your application provides the `name` in the `options.data` field during `supabase.auth.signUp()` if you want to use it directly in the `user_metadata` for email templates. The current `register` function in `src/lib/auth.ts` does this.
 
-By following these setup steps, your Next.js application should be correctly configured to use Firebase for authentication and Firestore for its database.
-```
+By following these setup steps, your Next.js application should be correctly configured to use Supabase for authentication and its database.
