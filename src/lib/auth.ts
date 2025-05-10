@@ -23,8 +23,8 @@ async function fetchUserWithProfile(authUser: SupabaseUser | null): Promise<AppU
       const userIdForLog = authUser.id || 'unknown user';
       if (profileError.code === '42P01') { // Specific code for "undefined_table" or "relation does not exist"
         console.error(`Error fetching profile for user ${userIdForLog}: The 'profiles' table does not exist. Code: ${profileError.code}, Message: ${profileError.message}. Please ensure the 'profiles' table is created in your database. Check migrations or Supabase SQL Editor. Full error:`, profileError);
-      } else if (typeof profileError === 'object' && profileError !== null && Object.keys(profileError).length === 0) {
-        console.error(`Error fetching profile for user ${userIdForLog}: Received an empty error object {}. This could indicate a problem with RLS policies on the 'profiles' table, the table might not exist, or a network issue. Supabase error code: ${profileError.code || 'N/A'}, Message: ${profileError.message || 'N/A'}`);
+      } else if (typeof profileError === 'object' && profileError !== null && Object.keys(profileError).length === 0 && !profileError.message && !profileError.details) {
+        console.error(`Error fetching profile for user ${userIdForLog}: Received an empty error object {}. This could indicate a problem with RLS policies on the 'profiles' table (e.g., select permission missing), the table might not exist, or a network issue. Supabase error code: ${profileError.code || 'N/A'}, Message: ${profileError.message || 'N/A'}`);
       } else if (typeof profileError === 'object' && profileError !== null) {
         console.error(`Error fetching profile for user ${userIdForLog}: Code: ${profileError.code || 'N/A'}, Message: ${profileError.message || 'N/A'}. Full error:`, profileError);
       } else {
@@ -83,14 +83,12 @@ export const register = async (name: string, email: string, password: string): P
     email,
     password,
     options: {
-      data: { // This data is stored in auth.users.raw_user_meta_data
+      data: { 
         name: name,
+        // avatar_url can be set here if available at signup, or updated later.
+        // Example: avatar_url: 'https://picsum.photos/seed/user123/200' 
       },
-      // Supabase sends a confirmation email by default.
-      // Customize email template in Supabase Dashboard: Authentication > Email Templates
-      // The link will point to SITE_URL (set in Supabase Auth settings) + #confirmation_token=TOKEN
-      // You need to handle this flow on the client-side.
-      emailRedirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
+      emailRedirectTo: typeof window !== 'undefined' ? `${window.location.origin}/dashboard` : undefined, // Redirect to dashboard after confirmation
     },
   });
 
@@ -103,27 +101,31 @@ export const register = async (name: string, email: string, password: string): P
   }
   if (!data.user) throw new Error("Registration successful but no user data received.");
 
-  // The profiles table should be populated by the trigger `on_auth_user_created`
-  // We wait a bit to give the trigger time to run, then fetch the profile.
-  // A more robust solution might involve polling or a serverless function if immediate profile is critical.
-  await new Promise(resolve => setTimeout(resolve, 1000)); // Small delay for trigger
-
+  // The profiles table should be populated by the trigger `handle_new_user` (renamed from on_auth_user_created).
+  // We fetch the profile. If the trigger is slow or fails, profile might be null initially.
   const appUser = await fetchUserWithProfile(data.user);
 
   // If profile still not found, it's an issue (trigger failed or RLS issue)
-  if (!appUser || !appUser.profile) {
-     console.warn(`User ${data.user.id} registered, but profile was not found immediately. The on_auth_user_created trigger might have issues or RLS policies are too restrictive.`);
+  // The UI should gracefully handle a null profile and perhaps prompt the user or show a loading state.
+  if (!appUser) {
+    // This case implies fetchUserWithProfile itself failed unexpectedly beyond just a missing profile.
+    throw new Error("Registration successful but failed to process user data even after attempting to fetch profile.");
+  }
+
+  if (!appUser.profile) {
+     console.warn(`User ${data.user.id} registered, but profile was not found immediately. The handle_new_user trigger might have issues or RLS policies are too restrictive. The app will proceed, and the profile might become available later or require manual intervention if the trigger is broken.`);
      // Attempt to create profile manually as a fallback - this is not ideal and indicates trigger issues.
      // It requires user to have insert permission on profiles table directly after signup for their own ID.
      const { error: insertError } = await supabase.from('profiles').insert({
         id: data.user.id,
-        name: name,
-        email: data.user.email,
+        name: name, // Name from registration form
+        email: data.user.email, // Email from auth user
+        avatar_url: data.user.user_metadata?.avatar_url || null // Avatar from user_metadata if set during signup
      });
      if (insertError) {
         console.error("Fallback profile insert failed:", insertError);
         // Proceed without profile, user might see a degraded experience until profile is sorted.
-        return { ...data.user, profile: null };
+        return { ...data.user, profile: null }; // Return the auth user part with a null profile
      }
      // Re-fetch after manual insert
      const finalAppUser = await fetchUserWithProfile(data.user);
@@ -146,23 +148,12 @@ export const onAuthStateChangeCallback = (
   callback: (user: AppUser | null, session: Session | null) => void
 ): { unsubscribe: () => void } => {
   const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-    if (event === 'SIGNED_IN' && session?.user) {
-      const appUser = await fetchUserWithProfile(session.user);
-      callback(appUser, session);
-    } else if (event === 'SIGNED_OUT') {
-      callback(null, null);
-    } else if (event === 'USER_UPDATED' && session?.user) {
-      const appUser = await fetchUserWithProfile(session.user);
-      callback(appUser, session);
-    } else if (event === 'PASSWORD_RECOVERY') {
-      // Handle password recovery event, e.g. redirect to a password reset page
-    } else if (session?.user) { // For other events like TOKEN_REFRESHED, if user exists
-      const appUser = await fetchUserWithProfile(session.user);
-      callback(appUser, session);
-    } else { // If no session or user for other events
-      callback(null, session);
-    }
+    // console.log(`Supabase auth event: ${event}`, session);
+    const authUser = session?.user || null;
+    const appUser = await fetchUserWithProfile(authUser);
+    callback(appUser, session);
   });
 
   return { unsubscribe: authListener.subscription.unsubscribe };
 };
+
