@@ -32,7 +32,7 @@ export default function DashboardPage() {
     const assignedToUser = realtimeTasks.filter(
       task => task.assignee_ids && 
               task.assignee_ids.includes(user.id) && 
-              task.created_by_id === user.id && // Only show if also created by the current user
+              // task.created_by_id === user.id && // Removed: Show tasks assigned to user even if not created by them
               task.status !== 'Done' && 
               task.status !== 'Overdue'
     );
@@ -79,7 +79,7 @@ export default function DashboardPage() {
         <AlertTriangle className="h-12 w-12 sm:h-16 sm:w-16 text-destructive mb-4" />
         <h2 className="text-lg sm:text-xl font-semibold text-foreground mb-2">Profile Information Missing</h2>
         <p className="text-sm sm:text-base text-muted-foreground mb-6 max-w-md">
-          Your profile information (like your name) could not be fully loaded. This can happen if the profile document is missing or if there are permission issues with the 'profiles' collection in Firestore. Please ensure your database is set up correctly (see `README.md`).
+          Your profile information (like your name) could not be fully loaded. This can happen if the profile document is missing or if there are permission issues with the 'profiles' table in your database. Please ensure your database is set up correctly (see `README.md`).
         </p>
         <div className="flex flex-col sm:flex-row gap-2">
           <Button onClick={() => window.location.reload()} variant="outline">
@@ -154,7 +154,7 @@ export default function DashboardPage() {
         <p className="text-sm sm:text-base text-muted-foreground">Here&apos;s a summary of your tasks.</p>
       </div>
 
-      {renderTaskSection("Tasks Assigned to You", dashboardData.assignedTasks, Users, "No active tasks currently assigned to you that you also created. Create and assign one to yourself!", PanelLeft, "/tasks?filter=assigned_to_self")}
+      {renderTaskSection("Tasks Assigned to You", dashboardData.assignedTasks, Users, "No active tasks currently assigned to you.", PanelLeft, "/tasks?filter=assigned_to_self")}
       {renderTaskSection("Tasks You Created", dashboardData.createdTasks, UserPlus, "You haven't created any active tasks yet.", ListChecks, "/tasks?filter=created")}
       {renderTaskSection("Overdue Tasks", dashboardData.overdueTasks, AlertOctagon, "No overdue tasks. Keep it up!", CheckSquare, "/tasks?filter=overdue")}
 
