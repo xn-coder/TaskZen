@@ -1,3 +1,4 @@
+
 "use client";
 
 import type { PostgrestError } from "@supabase/supabase-js";
@@ -11,10 +12,10 @@ import { TASK_EDITABLE_STATUSES } from "@/lib/constants";
 import { processTask, getAllProfilesMap, updateTask as apiUpdateTask, deleteTask as apiDeleteTask } from "@/lib/taskService";
 import { Loader2, AlertTriangle, CalendarDays, Users, Tag, MessageSquare, Send, Edit, Trash2, UserCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
-import { Textarea } from "@/components/ui/textarea";
+import { Badge } from '@/components/ui/badge';
+import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { format, parseISO, formatDistanceToNow } from "date-fns";
@@ -48,16 +49,30 @@ export default function TaskDetailPage() {
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+  // Moved useMemo for sortedComments here, before any conditional returns
+  // This ensures hooks are called in the same order on every render.
+  const sortedComments = useMemo(() => {
+    if (!task || !task.comments) { // Check if task or task.comments is null/undefined
+      return [];
+    }
+    // Ensure to create a new array for sorting to avoid mutating the original state
+    return [...task.comments].sort((a, b) => {
+        // Add defensive checks for createdAt if they can be invalid
+        const dateA = a.createdAt ? parseISO(a.createdAt).getTime() : 0;
+        const dateB = b.createdAt ? parseISO(b.createdAt).getTime() : 0;
+        return dateB - dateA;
+    });
+  }, [task]); // Dependency on the whole task object
 
   const fetchTaskDetails = async () => {
     if (!taskId || !currentUser) return;
     setIsLoading(true);
-    setError(null); // Reset error state before fetching
+    setError(null);
 
     try {
       const { data: taskDataFromDb, error: fetchError } = await supabase
         .from('tasks')
-        .select('*') // Select all columns from tasks. Profile info will be resolved by processTask.
+        .select('*')
         .eq('id', taskId)
         .single();
 
@@ -159,14 +174,14 @@ export default function TaskDetailPage() {
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [realtimeTasks, taskId]);
+  }, [realtimeTasks, taskId, task]); // Added 'task' to dependency array as selectedStatus depends on it
 
 
   const handleAddComment = async () => {
     if (!newComment.trim() || !currentUser || !task) return;
     setIsSubmittingComment(true);
     try {
-      const updatedTask = await apiUpdateTask(task.id, {}, newComment.trim(), currentUser);
+      await apiUpdateTask(task.id, {}, newComment.trim(), currentUser);
       setNewComment("");
       toast({ title: "Comment Added", description: "Your comment has been posted." });
     } catch (e: any) {
@@ -188,7 +203,7 @@ export default function TaskDetailPage() {
     setIsUpdatingStatus(true);
     try {
         const commentText = `Status changed from ${task.status} to ${newStatus}.`;
-        const updatedTask = await apiUpdateTask(task.id, { status: newStatus as Exclude<TaskStatus, "Overdue"> }, commentText, currentUser);
+        await apiUpdateTask(task.id, { status: newStatus as Exclude<TaskStatus, "Overdue"> }, commentText, currentUser);
         setSelectedStatus(newStatus); 
         toast({ title: "Status Updated", description: `Task status changed to ${newStatus}.` });
     } catch (e: any) {
@@ -240,7 +255,7 @@ export default function TaskDetailPage() {
     );
   }
 
-  if (!task) {
+  if (!task) { // This check is now AFTER all hook calls
     return (
       <div className="flex h-full items-center justify-center p-4 sm:p-8">
         <p className="text-base sm:text-lg text-muted-foreground">Task data is unavailable or being redirected.</p>
@@ -248,6 +263,7 @@ export default function TaskDetailPage() {
     );
   }
 
+  // These constants are defined after `task` is guaranteed to be non-null.
   const isCreator = currentUser?.id === task.created_by_id;
   const isAssignee = task.assignee_ids?.includes(currentUser?.id || "");
   const canUpdateStatusOrComment = isCreator || isAssignee;
@@ -258,9 +274,6 @@ export default function TaskDetailPage() {
     High: "bg-red-500",
   };
   
-  const sortedComments = useMemo(() => {
-    return (task.comments || []).sort((a,b) => parseISO(b.createdAt).getTime() - parseISO(a.createdAt).getTime());
-  }, [task.comments]);
 
   return (
     <div className="container mx-auto py-4 sm:py-8">
