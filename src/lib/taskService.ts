@@ -169,7 +169,7 @@ export const addTask = async (
     due_date: taskData.due_date ? parseISO(taskData.due_date).toISOString() : null,
     priority: taskData.priority,
     status: taskData.status,
-    assignee_ids: taskData.assignee_ids, // taskData.assignee_ids is string[] due to form schema
+    assignee_ids: taskData.assignee_ids, 
     created_by_id: taskData.created_by_id,
     comments: [] as unknown as Json, 
   };
@@ -183,21 +183,16 @@ export const addTask = async (
   if (error || !insertedTaskData) {
     const logMessage = "Error adding task to Supabase:";
     if (error) {
-      console.error(logMessage, error);
-      if (typeof error === 'object' && 'message' in error) {
-        const pgError = error as PostgrestError;
-        // Check for specific error code related to 'assignee_ids' if Supabase provides one
-        if (pgError.message.includes("assignee_ids") && pgError.code) { // Example check
+      console.error(logMessage, error); // Log the full error
+      const pgError = error as PostgrestError;
+        if (pgError.message.includes("assignee_ids") && pgError.code) {
              throw new Error(`Failed to create task due to an issue with assignees: ${pgError.message} (Code: ${pgError.code}). Please check the 'assignees' field.`);
         }
         throw new Error(`Failed to create task: ${pgError.message} (Code: ${pgError.code})`);
-      } else {
-        throw new Error('Failed to create task due to an unknown error.');
-      }
     } else {
       console.error(logMessage, "No data returned after insert, and no explicit error object.");
+       throw new Error('Failed to create task or retrieve it after creation (no data returned).');
     }
-    throw new Error(error?.message || 'Failed to create task or retrieve it after creation.');
   }
   
   const profileIdsToFetch: string[] = [];
@@ -323,7 +318,7 @@ export const onTasksUpdate = (
       const { data: tasksData, error } = await supabaseClient
         .from('tasks')
         .select(`*`) 
-        .or(`created_by_id.eq.${userId},assignee_ids.cs.{${userId}}`) // Ensure 'assignee_ids' is correct
+        .or(`created_by_id.eq.${userId},assignee_ids.cs.{${userId}}`)
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -405,34 +400,39 @@ export const onTasksUpdate = (
         // console.log(`User ${userId} subscribed to tasks realtime!`);
       }
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-        let channelError : PostgrestError;
-        if (err && typeof err === 'object' && 'message' in err) { 
-            channelError = err as PostgrestError;
-             console.error(`Realtime channel for user ${userId} encountered ${status}. Message: ${channelError.message}, Code: ${channelError.code}, Details: ${channelError.details || 'N/A'}, Hint: ${channelError.hint || 'N/A'}. Raw Supabase event error:`, err);
-        } else { 
-            let errorDetailsString: string;
-            if (err === undefined) {
-                errorDetailsString = "No specific error details provided by Supabase.";
-                console.error(`Realtime channel for user ${userId} encountered ${status}. ${errorDetailsString}`);
-            } else if (typeof err === 'string') {
-                errorDetailsString = err;
-                 console.error(`Realtime channel for user ${userId} encountered ${status} with message: "${err}"`);
-            } else { 
-                try {
-                    errorDetailsString = JSON.stringify(err, Object.getOwnPropertyNames(err), 2);
-                } catch {
-                    errorDetailsString = String(err); 
-                }
-                console.error(`Realtime channel for user ${userId} encountered ${status}. Raw error data: ${errorDetailsString}`);
+        let channelError: PostgrestError;
+        let errorDetailsString = "N/A";
+
+        if (err === undefined) {
+            errorDetailsString = "No specific error details provided by Supabase.";
+            console.error(`Realtime channel for user ${userId} encountered ${status}. ${errorDetailsString}`);
+        } else if (typeof err === 'string') {
+            errorDetailsString = err;
+             console.error(`Realtime channel for user ${userId} encountered ${status} with message: "${err}"`);
+        } else if (typeof err === 'object' && err !== null && 'message' in err) {
+            const pgErr = err as PostgrestError;
+            errorDetailsString = `Message: ${pgErr.message || 'N/A'}, Code: ${pgErr.code || 'N/A'}, Details: ${pgErr.details || 'N/A'}, Hint: ${pgErr.hint || 'N/A'}`;
+             console.error(`Realtime channel for user ${userId} encountered ${status}. ${errorDetailsString}. Raw Supabase event error:`, err);
+        } else {
+            try {
+                errorDetailsString = JSON.stringify(err);
+            } catch {
+                errorDetailsString = String(err);
             }
-            
-            channelError = {
-                message: `Realtime channel ${status}. ${errorDetailsString.startsWith("No specific") ? errorDetailsString : "See details."}`,
-                code: status, 
-                details: errorDetailsString,
-                hint: "Check network or Supabase realtime status. This might be a temporary issue."
-            } as PostgrestError;
+            console.error(`Realtime channel for user ${userId} encountered ${status} with complex/unknown error structure: ${errorDetailsString}. Raw Supabase event 'err':`, err);
         }
+        
+        channelError = {
+            message: `Realtime channel ${status}: ${errorDetailsString}`,
+            code: status,
+            details: `Original Supabase event 'err': ${err === undefined ? 'undefined' : (typeof err === 'string' ? err : JSON.stringify(err))}`,
+            hint: "Check network connection, Supabase project status, and RLS policies for realtime. This could be a temporary issue or a configuration problem."
+        } as PostgrestError; // Cast to PostgrestError for consistency
+        
+        console.error(
+          `Realtime channel error for user ${userId}: Status: ${status}. ` +
+          `Raw Supabase event error: ${errorDetailsString}. (Processed as PostgrestError analogue)`
+        );
         callback({ tasks: [], isLoading: false, error: channelError});
       }
     });
