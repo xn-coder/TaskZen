@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
@@ -5,7 +6,7 @@ import type { Task, TaskPriority, TaskStatus } from '@/lib/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { getTasks, deleteTask as apiDeleteTask } from '@/lib/taskService';
 import { TaskCard } from '@/components/tasks/TaskCard';
-import { TaskFilter } from '@/components/tasks/TaskSearch';
+import { TaskFilter } from '@/components/tasks/TaskFilter'; // Corrected import path
 import { TaskSearch } from '@/components/tasks/TaskSearch';
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Loader2, PlusCircle, AlertTriangle } from 'lucide-react';
@@ -114,7 +115,7 @@ export default function TasksPage() {
 
 
   const handleEditTask = (task: Task) => {
-    // Creator check removed here. Non-creators can navigate to edit page.
+    // Non-creators can navigate to edit page.
     // TaskForm and Firestore rules will handle actual edit permissions.
     router.push(`/tasks/${task.id}/edit`);
   };
