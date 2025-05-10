@@ -1,4 +1,3 @@
-
 "use client";
 
 import * as React from 'react'; 
@@ -54,12 +53,12 @@ const TaskCardComponent = ({ task, onEdit, onDelete, className }: TaskCardProps)
 
   const creatorName = task.created_by?.name || "Unknown Creator";
   
-  const getAvatarFallback = (name: string | undefined) => {
+  const getAvatarFallback = (name: string | undefined | null) => {
     return name ? name.charAt(0).toUpperCase() : 'U';
   }
 
-  const canDelete = user?.uid === task.created_by_id;
-  const canEditTaskDetails = user?.uid === task.created_by_id; 
+  const canDelete = user?.id === task.created_by_id;
+  const canEditTaskDetails = user?.id === task.created_by_id; 
 
   const handleCardClick = (e: React.MouseEvent<HTMLDivElement>) => {
     // Prevent navigation if a button inside the card was clicked
@@ -130,11 +129,11 @@ const TaskCardComponent = ({ task, onEdit, onDelete, className }: TaskCardProps)
                     <Avatar className="h-5 w-5 sm:h-6 sm:w-6 border-2 border-card hover:z-10">
                       <AvatarImage 
                         src={assignee.avatar_url || `https://avatar.vercel.sh/${assignee.email || assignee.id}.png`} 
-                        alt={assignee.name} data-ai-hint="profile avatar"/>
+                        alt={assignee.name || 'User Avatar'} data-ai-hint="profile avatar"/>
                       <AvatarFallback className="text-xs">{getAvatarFallback(assignee.name)}</AvatarFallback>
                     </Avatar>
                   </TooltipTrigger>
-                  <TooltipContent><p>{assignee.name}</p></TooltipContent>
+                  <TooltipContent><p>{assignee.name || 'Unknown User'}</p></TooltipContent>
                 </Tooltip>
               ))}
               {task.assignees.length > 3 && (
@@ -145,8 +144,7 @@ const TaskCardComponent = ({ task, onEdit, onDelete, className }: TaskCardProps)
                         </Avatar>
                     </TooltipTrigger>
                     <TooltipContent>
-                        <p>{task.assignees.slice(3).map(a => a.name).join(', ')}</p>
-                    </TooltipContent>
+                        <p>{task.assignees.slice(3).map(a => a.name || 'Unknown User').join(', ')}</p></TooltipContent>
                 </Tooltip>
               )}
             </div>

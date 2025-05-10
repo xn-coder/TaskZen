@@ -1,4 +1,3 @@
-
 import { supabase } from './supabaseClient';
 import type { Task, Profile, TaskStatus, Comment } from './types';
 import type { AppUser } from './auth';
@@ -226,10 +225,10 @@ export const updateTask = async (
     }
   }
   
-  if (newCommentText && newCommentText.trim() !== "" && currentUser && currentUser.id && currentUser.profile) {
+  if (newCommentText && newCommentText.trim() !== "" && currentUser && currentUser.id) {
     const newComment: Comment = {
       userId: currentUser.id,
-      userName: currentUser.profile.name || currentUser.email || "User",
+      userName: currentUser.profile?.name || currentUser.email || "User", // Safely access profile name
       text: newCommentText.trim(),
       createdAt: new Date().toISOString(),
     };
@@ -307,12 +306,10 @@ export const onTasksUpdate = (
     try {
       const profilesMap = await getAllProfilesMap();
       
-      // Removed the problematic join: created_by_profile:profiles!tasks_created_by_id_fkey(...)
-      // Profile resolution will happen in processTask using profilesMap
       const { data: tasksData, error } = await supabaseClient
         .from('tasks')
         .select(`*`) 
-        .or(`created_by_id.eq.${userId},assignee_ids.cs.{${userId}}`) // Ensure this uses the correct column name if it was assignee_id
+        .or(`created_by_id.eq.${userId},assignee_ids.cs.{${userId}}`)
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -327,9 +324,15 @@ export const onTasksUpdate = (
             details: "The error object from Supabase lacked standard properties like 'message' or 'code'. This could indicate a network connectivity issue, a problem with Row Level Security (RLS) policies preventing data access, or an internal Supabase error.",
             hint: "Check your network connection, Supabase project status, and RLS policies for the 'tasks' table. Ensure the user has SELECT permissions."
           } as PostgrestError;
+           console.error(logMessage, processedError.message, "Raw error:", error);
         } else if (error && typeof error === 'object' && 'message' in error) {
-          console.error(logMessage, error); // Log the original detailed error
-          processedError = error as PostgrestError;
+          const pgError = error as PostgrestError;
+          console.error(
+            logMessage,
+            `Message: ${pgError.message || 'N/A'}, Code: ${pgError.code || 'N/A'}, Details: ${pgError.details || 'N/A'}, Hint: ${pgError.hint || 'N/A'}. Raw error:`,
+            error // Log the original error object as well
+          );
+          processedError = pgError;
         } else {
           console.error(logMessage + " Encountered an unexpected error type:", error);
           processedError = {
@@ -416,4 +419,3 @@ export const onTasksUpdate = (
 };
 
 import type { Database } from '@/lib/types/supabase';
-

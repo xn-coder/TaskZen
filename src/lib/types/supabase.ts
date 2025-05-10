@@ -128,22 +128,3 @@ export interface Comment {
   text: string;
   createdAt: string; // ISO string
 }
-
-// This Task type includes client-side populated fields like 'assignees' and 'created_by' (Profile objects)
-// and the client-calculated 'status' ("Overdue").
-// The Database['public']['Tables']['tasks']['Row'] is the direct DB representation.
-export interface AppTask {
-  id: string;
-  title: string;
-  description: string | null;
-  due_date: string | null;
-  priority: TaskPriority;
-  status: TaskStatus;
-  assignee_ids: string[] | null;
-  assignees: Profile[] | null;
-  created_by_id: string;
-  created_by?: Profile | null;
-  created_at: string;
-  updated_at: string;
-  comments: Comment[] | null;
-}
