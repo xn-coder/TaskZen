@@ -1,4 +1,3 @@
-
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -22,7 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Label } from "@/components/ui/label";
-import type { Task, Profile, TaskStatus, TaskPriority } from '@/lib/types'; // Using AppTask as Task
+import type { Task, Profile, TaskStatus, TaskPriority } from '@/lib/types'; 
 import { TASK_EDITABLE_STATUSES, TASK_PRIORITIES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { CalendarIcon, Loader2, ChevronDown } from "lucide-react";
@@ -32,7 +31,7 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { useState, useEffect, useMemo } from "react";
 import { addTask, updateTask, getProfilesForDropdown } from "@/lib/taskService";
-import type { AppUser } from "@/lib/auth"; // Supabase AppUser
+import type { AppUser } from "@/lib/auth"; 
 
 const taskFormSchema = z.object({
   title: z.string().min(3, "Title must be at least 3 characters."),
@@ -62,21 +61,18 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
 
   useEffect(() => {
     async function fetchProfiles() {
+      if (!authUser) return; // Don't fetch if not logged in
       try {
         const profiles = await getProfilesForDropdown();
-        setAllProfiles(profiles);
+        // Filter out the current user from the list of assignable profiles
+        setAllProfiles(profiles.filter(p => p.id !== authUser.id));
       } catch (error) {
         console.error("Failed to fetch profiles for dropdown:", error);
         toast({ title: "Error", description: "Could not load users for assignee field.", variant: "destructive" });
       }
     }
     fetchProfiles();
-  }, [toast]);
-
-  const assignableProfiles = useMemo(() => {
-    if (!authUser || !authUser.id) return allProfiles;
-    return allProfiles.filter(profile => profile.id !== authUser.id);
-  }, [allProfiles, authUser]);
+  }, [toast, authUser]);
 
 
   const form = useForm<TaskFormValues>({
@@ -113,14 +109,13 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
             taskUpdatesPayload.priority = values.priority;
             taskUpdatesPayload.status = values.status;
             taskUpdatesPayload.assignee_ids = values.assignee_ids || [];
-        } else {
+        } else { // Non-creator can only update status and add comment
             taskUpdatesPayload.status = values.status;
         }
         
         resultTask = await updateTask(initialData.id, taskUpdatesPayload, values.newCommentText, authUser);
 
       } else { 
-        // Ensure status is of the correct type for new tasks (not "Overdue")
         const validStatus = TASK_EDITABLE_STATUSES.includes(values.status as Exclude<TaskStatus, "Overdue">) 
                             ? values.status as Exclude<TaskStatus, "Overdue">
                             : "To Do";
@@ -134,7 +129,10 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
             assignee_ids: values.assignee_ids || [],
             created_by_id: authUser.id,
         };
-        resultTask = await addTask(taskCreationPayload as Omit<Task, 'id' | 'created_at' | 'updated_at' | 'assignees' | 'created_by' | 'comments'> & { status: Exclude<TaskStatus, "Overdue">; created_by_id: string });
+        resultTask = await addTask(
+          taskCreationPayload as Omit<Task, 'id' | 'created_at' | 'updated_at' | 'assignees' | 'created_by' | 'comments'> & { status: Exclude<TaskStatus, "Overdue">; created_by_id: string },
+          authUser.profile // Pass current user's profile
+        );
       }
 
       toast({
@@ -145,7 +143,8 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
       if (onSubmitSuccess) {
         onSubmitSuccess(resultTask);
       } else {
-        router.push('/tasks'); 
+        // router.push('/tasks'); 
+        router.push(`/tasks/${resultTask.id}`); // Redirect to the task detail page
       }
     } catch (error: any) {
       console.error("Failed to save task:", error);
@@ -291,8 +290,8 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
                   <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
                     <ScrollArea className="h-48">
                       <div className="p-2 space-y-1">
-                      {assignableProfiles.length === 0 && <p className="text-sm text-muted-foreground p-2 text-center">No other users available to assign.</p>}
-                      {assignableProfiles.map((profile) => (
+                      {allProfiles.length === 0 && <p className="text-sm text-muted-foreground p-2 text-center">No other users available to assign.</p>}
+                      {allProfiles.map((profile) => (
                         <div key={profile.id} className="flex items-center space-x-2 p-1.5 hover:bg-accent rounded-md">
                           <Checkbox
                             id={`assignee-${profile.id}`}
