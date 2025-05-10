@@ -1,4 +1,3 @@
-
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -39,7 +38,7 @@ const taskFormSchema = z.object({
   due_date: z.date({ required_error: "Due date is required." }),
   priority: z.enum(TASK_PRIORITIES as [TaskPriority, ...TaskPriority[]]),
   status: z.enum(TASK_EDITABLE_STATUSES as [Exclude<TaskStatus, "Overdue">, ...Exclude<TaskStatus, "Overdue">[]]),
-  assignee_ids: z.array(z.string()).optional().default([]), // Array of assignee IDs
+  assignee_ids: z.array(z.string()).optional().default([]), 
 });
 
 type TaskFormValues = z.infer<typeof taskFormSchema>;
@@ -48,9 +47,10 @@ interface TaskFormProps {
   initialData?: Task | null;
   onSubmitSuccess?: (task: Task) => void;
   isEditing?: boolean;
+  isCreator?: boolean; // New prop
 }
 
-export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = false }: TaskFormProps) {
+export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = false, isCreator = true }: TaskFormProps) {
   const { user: authUser } = useAuth();
   const router = useRouter();
   const { toast } = useToast();
@@ -97,6 +97,11 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
     }
     setIsSubmitting(true);
 
+    // Firestore rules will enforce that non-creators can only update status.
+    // The form fields are disabled in the UI for non-creators, but react-hook-form
+    // will still submit their initial (unchanged) values.
+    // Firestore's `request.resource.data.diff(resource.data).affectedKeys()` will correctly
+    // identify that only 'status' (and 'updated_at') changed if a non-creator submits.
     const taskPayloadBase = {
       ...values,
       due_date: formatISO(values.due_date), 
@@ -107,8 +112,30 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
     try {
       let resultTask: Task;
       if (isEditing && initialData) {
-        resultTask = await updateTask(initialData.id, taskPayloadBase as Partial<Omit<Task, 'id' | 'created_at' | 'updated_at' | 'assignees' | 'created_by'>>);
+        // For updates, ensure we only send fields that were actually editable or changed by the user.
+        // Firestore rules are the ultimate enforcer.
+        let payloadForUpdate: Partial<Omit<Task, 'id' | 'created_at' | 'updated_at' | 'assignees' | 'created_by'>> = {
+            title: values.title,
+            description: values.description || "",
+            due_date: formatISO(values.due_date),
+            priority: values.priority,
+            status: values.status,
+            assignee_ids: values.assignee_ids || [],
+        };
+
+        if (!isCreator) {
+            // If not the creator, only allow status to be part of the payload for update.
+            // Other fields were disabled, so their values from the form should match initialData.
+            // Sending only status minimizes risk if Firestore rules were misconfigured.
+            payloadForUpdate = {
+                status: values.status,
+            };
+        }
+        
+        resultTask = await updateTask(initialData.id, payloadForUpdate);
+
       } else {
+        // Creating a new task
         const fullPayloadForAdd = {
             ...taskPayloadBase,
             created_by_id: authUser.uid, 
@@ -138,6 +165,8 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
       setIsSubmitting(false);
     }
   }
+  
+  const canEditField = !isEditing || isCreator;
 
   return (
     <Form {...form}>
@@ -149,7 +178,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
             <FormItem>
               <FormLabel>Title</FormLabel>
               <FormControl>
-                <Input placeholder="E.g., Finalize project report" {...field} />
+                <Input placeholder="E.g., Finalize project report" {...field} disabled={!canEditField} />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -162,7 +191,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
             <FormItem>
               <FormLabel>Description (Optional)</FormLabel>
               <FormControl>
-                <Textarea placeholder="Add more details about the task..." {...field} value={field.value ?? ""} rows={4} />
+                <Textarea placeholder="Add more details about the task..." {...field} value={field.value ?? ""} rows={4} disabled={!canEditField} />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -184,6 +213,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
                           "pl-3 text-left font-normal",
                           !field.value && "text-muted-foreground"
                         )}
+                        disabled={!canEditField}
                       >
                         {field.value ? format(field.value, "PPP") : <span>Pick a date</span>}
                         <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
@@ -210,7 +240,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Priority</FormLabel>
-                <Select onValueChange={field.onChange} defaultValue={field.value}>
+                <Select onValueChange={field.onChange} defaultValue={field.value} disabled={!canEditField}>
                   <FormControl>
                     <SelectTrigger>
                       <SelectValue placeholder="Select priority" />
@@ -234,7 +264,8 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Status</FormLabel>
-                <Select onValueChange={field.onChange} defaultValue={field.value}>
+                {/* Status field is always enabled for editing tasks if user has access */}
+                <Select onValueChange={field.onChange} defaultValue={field.value} disabled={isSubmitting}>
                   <FormControl>
                     <SelectTrigger>
                       <SelectValue placeholder="Select status" />
@@ -258,7 +289,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
                 <FormLabel>Assign To</FormLabel>
                 <Popover>
                   <PopoverTrigger asChild>
-                    <Button variant="outline" className="w-full justify-start text-left font-normal">
+                    <Button variant="outline" className="w-full justify-start text-left font-normal" disabled={!canEditField}>
                       {field.value && field.value.length > 0
                         ? `${field.value.length} user(s) selected`
                         : "Select assignees"}
@@ -282,8 +313,9 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
                                 form.setValue("assignee_ids", currentIds.filter(id => id !== profile.id));
                               }
                             }}
+                            disabled={!canEditField}
                           />
-                          <Label htmlFor={`assignee-${profile.id}`} className="font-normal flex-1 cursor-pointer text-sm">
+                          <Label htmlFor={`assignee-${profile.id}`} className={cn("font-normal flex-1 cursor-pointer text-sm", !canEditField && "cursor-not-allowed opacity-70")}>
                             {profile.name} <span className="text-xs text-muted-foreground">({profile.email})</span>
                           </Label>
                         </div>
@@ -293,7 +325,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
                   </PopoverContent>
                 </Popover>
                 <FormDescription>
-                  Choose team members to assign this task to. You cannot assign tasks to yourself.
+                  {canEditField ? "Choose team members to assign this task to. You cannot assign tasks to yourself." : "Assignees cannot be changed by non-creators."}
                 </FormDescription>
                 <FormMessage />
               </FormItem>
@@ -301,7 +333,7 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
           />
         </div>
         <div className="flex justify-end space-x-3 pt-4">
-            <Button type="button" variant="outline" onClick={() => router.back()}>Cancel</Button>
+            <Button type="button" variant="outline" onClick={() => router.back()} disabled={isSubmitting}>Cancel</Button>
             <Button type="submit" disabled={isSubmitting}>
                 {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {isEditing ? "Save Changes" : "Create Task"}
@@ -311,3 +343,4 @@ export function TaskForm({ initialData = null, onSubmitSuccess, isEditing = fals
     </Form>
   );
 }
+

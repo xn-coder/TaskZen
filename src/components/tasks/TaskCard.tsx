@@ -1,4 +1,3 @@
-
 "use client";
 
 import type { Task, Profile } from "@/lib/types";
@@ -55,7 +54,9 @@ export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
     return name ? name.charAt(0).toUpperCase() : 'U';
   }
 
-  const canEdit = user?.uid === task.created_by_id;
+  const canDelete = user?.uid === task.created_by_id;
+  // Edit button is now always enabled for users who can see the card.
+  // TaskForm will handle field-level disablement based on creator status.
 
   return (
     <TooltipProvider>
@@ -127,37 +128,43 @@ export function TaskCard({ task, onEdit, onDelete, className }: TaskCardProps) {
             </div>
           </div>
         )}
-         {task.created_by_id && ( 
+         {task.created_by_id && task.created_by && ( 
           <div className="flex items-center text-xs text-muted-foreground/80 pt-1">
             <span>Created by: {creatorName}</span>
           </div>
         )}
       </CardContent>
       <CardFooter className="flex justify-end space-x-2 border-t pt-4">
+        <Button 
+          variant="outline" 
+          size="sm" 
+          onClick={() => onEdit(task)}
+          // Edit button is now always enabled; TaskForm handles field permissions.
+        >
+          <Edit3 className="mr-1 h-4 w-4" /> Edit
+        </Button>
+        
         <Tooltip>
           <TooltipTrigger asChild>
             {/* Span wrapper is necessary for Tooltip to work on disabled buttons */}
-            <span tabIndex={canEdit ? undefined : 0}> 
+            <span tabIndex={canDelete ? undefined : 0}> 
               <Button 
-                variant="outline" 
+                variant="destructive" 
                 size="sm" 
-                onClick={() => onEdit(task)}
-                disabled={!canEdit}
-                aria-disabled={!canEdit}
+                onClick={() => onDelete(task.id)}
+                disabled={!canDelete}
+                aria-disabled={!canDelete}
               >
-                <Edit3 className="mr-1 h-4 w-4" /> Edit
+                <Trash2 className="mr-1 h-4 w-4" /> Delete
               </Button>
             </span>
           </TooltipTrigger>
-          {!canEdit && (
+          {!canDelete && (
             <TooltipContent>
-              <p>Only the task creator can edit this task.</p>
+              <p>Only the task creator can delete this task.</p>
             </TooltipContent>
           )}
         </Tooltip>
-        <Button variant="destructive" size="sm" onClick={() => onDelete(task.id)}>
-          <Trash2 className="mr-1 h-4 w-4" /> Delete
-        </Button>
       </CardFooter>
     </Card>
     </TooltipProvider>

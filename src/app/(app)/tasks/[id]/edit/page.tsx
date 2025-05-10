@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState } from 'react';
@@ -11,6 +10,8 @@ import { db } from '@/lib/firebase';
 import type { Task } from '@/lib/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from "@/hooks/use-toast";
+import { Button } from '@/components/ui/button';
+
 
 export default function EditTaskPage() {
   const params = useParams();
@@ -23,6 +24,7 @@ export default function EditTaskPage() {
   const [task, setTask] = useState<Task | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isCreator, setIsCreator] = useState(false);
 
   useEffect(() => {
     if (authLoading) return; // Wait for auth state to resolve
@@ -46,23 +48,26 @@ export default function EditTaskPage() {
 
         if (taskSnap.exists()) {
           const taskData = { id: taskSnap.id, ...taskSnap.data() } as Task;
-          // Convert Timestamps to ISO strings if necessary, TaskForm expects Date objects or ISO strings
+          
+          // Convert Timestamps to ISO strings if necessary
           if (taskData.due_date && taskData.due_date instanceof Object && 'toDate' in taskData.due_date) {
              taskData.due_date = (taskData.due_date as any).toDate().toISOString();
           }
-
-
-          if (taskData.created_by_id !== user.uid) {
-            setError("You are not authorized to edit this task.");
-            toast({
-              title: "Permission Denied",
-              description: "You can only edit tasks that you created.",
-              variant: "destructive",
-            });
-            router.replace('/tasks'); // Or dashboard
-          } else {
-            setTask(taskData);
+          // Assuming created_at and updated_at are also Timestamps from DB if not already processed by a service layer
+           if (taskData.created_at && typeof taskData.created_at !== 'string' && 'toDate' in taskData.created_at) {
+            taskData.created_at = (taskData.created_at as any).toDate().toISOString();
           }
+          if (taskData.updated_at && typeof taskData.updated_at !== 'string' && 'toDate' in taskData.updated_at) {
+            taskData.updated_at = (taskData.updated_at as any).toDate().toISOString();
+          }
+
+
+          // Determine if the current user is the creator
+          // Non-creators can view the form to update status.
+          const currentUserIsCreator = taskData.created_by_id === user.uid;
+          setIsCreator(currentUserIsCreator);
+          setTask(taskData);
+          
         } else {
           setError("Task not found.");
            toast({
@@ -124,12 +129,15 @@ export default function EditTaskPage() {
       <Card className="max-w-3xl mx-auto shadow-lg">
         <CardHeader>
           <CardTitle className="text-2xl font-bold">Edit Task</CardTitle>
-          <CardDescription>Update the details for your task below.</CardDescription>
+          <CardDescription>
+            {isCreator ? "Update the details for your task below." : "Update the status of this task."}
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          <TaskForm initialData={task} isEditing={true} />
+          <TaskForm initialData={task} isEditing={true} isCreator={isCreator} />
         </CardContent>
       </Card>
     </div>
   );
 }
+

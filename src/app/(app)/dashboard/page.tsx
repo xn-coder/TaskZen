@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState } from 'react';
@@ -26,10 +25,8 @@ export default function DashboardPage() {
   const { toast } = useToast();
 
   const handleEditTaskRedirect = (task: Task) => {
-    if (user?.uid !== task.created_by_id) {
-      toast({ title: "Permission Denied", description: `Only the creator can edit task: ${task.title}.`, variant: "destructive"});
-      return;
-    }
+    // Creator check removed. Non-creators can access edit page to update status.
+    // Field-level permissions are handled in TaskForm and Firestore rules.
     router.push(`/tasks/${task.id}/edit`);
   };
 
@@ -46,8 +43,14 @@ export default function DashboardPage() {
     }
     
     if (!user.profile) {
-      setIsFetchingTasks(false); 
-      return;
+      // Profile might still be loading or failed to load, wait for it or handle appropriately.
+      // For now, let's assume if user object is there but no profile, it might be an issue.
+      // However, critical operations depend on user.uid which is available.
+      // If profile is strictly needed for getDashboardTasks, this needs refinement.
+      // Assuming getDashboardTasks primarily uses user.uid.
+      console.warn("Dashboard: User profile is not loaded. Proceeding with user.uid.");
+      // setIsFetchingTasks(false); // Optionally, handle if profile is absolutely necessary before fetch
+      // return;
     }
 
     setIsFetchingTasks(true);
@@ -67,6 +70,9 @@ export default function DashboardPage() {
 
 
   const handleDeleteTaskPlaceholder = (taskId: string) => {
+     // Actual delete permission is checked on TaskCard and via Firestore rules.
+     // This placeholder might be for a different context if needed.
+     // For now, direct deletion attempt from here is not the primary path.
      toast({ title: "Delete Action", description: `To delete tasks, please go to the All Tasks page.`});
   };
 
@@ -81,8 +87,6 @@ export default function DashboardPage() {
   
   // After authLoading is false, if user is still null, it means redirection to login should happen or user is logged out
   if (!user && !authLoading) {
-     // This state should ideally be caught by ProtectedRoute, but good to have a fallback.
-     // Forcing a replace again if somehow missed.
      if (typeof window !== "undefined") router.replace('/login');
      return (
        <div className="flex h-full flex-col items-center justify-center text-center p-6">
@@ -100,6 +104,8 @@ export default function DashboardPage() {
   
   // User object exists, but profile might be missing
   if (user && !user.profile && !authLoading) {
+    // This specific check might need re-evaluation based on how critical profile is versus user.uid
+    // For now, keep it as it might indicate an incomplete user setup state.
     return (
        <div className="flex h-full flex-col items-center justify-center text-center p-6">
         <AlertTriangle className="h-16 w-16 text-destructive mb-4" />
@@ -115,7 +121,7 @@ export default function DashboardPage() {
             try {
               await useAuth().logout(); 
             } catch (e) { console.error(e); }
-            router.push('/login');
+            // router.push('/login'); // Logout itself should redirect via AuthContext
           }} variant="default">
             Logout and Login Again
           </Button>
@@ -124,7 +130,7 @@ export default function DashboardPage() {
     );
   }
   
-  if (isFetchingTasks && user && user.profile) { // Only show task loading if user and profile are present
+  if (isFetchingTasks && user) { // Only show task loading if user is present
      return (
       <div className="flex h-full items-center justify-center">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -133,8 +139,8 @@ export default function DashboardPage() {
     );
   }
 
-  // Fallback if somehow no user/profile but not caught above (should be rare)
-  if (!user || !user.profile) {
+  // Fallback if somehow no user but not caught above (should be rare)
+  if (!user) {
     return (
       <div className="flex h-full items-center justify-center">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -165,8 +171,8 @@ export default function DashboardPage() {
             <TaskCard
               key={task.id}
               task={task}
-              onEdit={() => handleEditTaskRedirect(task)}
-              onDelete={handleDeleteTaskPlaceholder}
+              onEdit={() => handleEditTaskRedirect(task)} // Use updated redirect handler
+              onDelete={handleDeleteTaskPlaceholder} // This is a placeholder, actual delete is on All Tasks page
             />
           ))}
         </div>
@@ -181,11 +187,12 @@ export default function DashboardPage() {
       )}
     </section>
   );
+  const welcomeName = user.profile?.name || user.displayName || user.email || "User";
 
   return (
     <div className="container mx-auto py-2">
       <div className="mb-8 p-6 bg-card rounded-lg shadow">
-        <h1 className="text-3xl font-bold text-foreground">Welcome back, {user.profile.name || user.displayName || user.email}!</h1>
+        <h1 className="text-3xl font-bold text-foreground">Welcome back, {welcomeName}!</h1>
         <p className="text-muted-foreground">Here&apos;s a summary of your tasks.</p>
       </div>
 

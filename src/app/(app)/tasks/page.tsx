@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
@@ -6,7 +5,7 @@ import type { Task, TaskPriority, TaskStatus } from '@/lib/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { getTasks, deleteTask as apiDeleteTask } from '@/lib/taskService';
 import { TaskCard } from '@/components/tasks/TaskCard';
-import { TaskFilter } from '@/components/tasks/TaskFilter';
+import { TaskFilter } from '@/components/tasks/TaskSearch';
 import { TaskSearch } from '@/components/tasks/TaskSearch';
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Loader2, PlusCircle, AlertTriangle } from 'lucide-react';
@@ -67,12 +66,8 @@ export default function TasksPage() {
          setFilters(prev => ({...prev, status: ['Overdue']}));
          return; 
       }
-      // For 'assigned' or 'created', the filtering is now primarily handled by `filteredTasks` memo
-      // and the `getTasks` function itself which fetches relevant tasks based on userId.
-      // This effect ensures that if URL has `filter=assigned` or `filter=created`,
-      // those tasks are prioritized or shown. The `filteredTasks` memo will respect these.
     }
-  }, [initialFilterParam, user, tasks.length]); // Added tasks.length as a dependency
+  }, [initialFilterParam, user, tasks.length]); 
 
 
   const filteredTasks = useMemo(() => {
@@ -80,12 +75,10 @@ export default function TasksPage() {
 
     if (user?.uid) {
         if (initialFilterParam === "assigned") {
-            // Filter tasks where the current user is one of the assignees
-            tasksToFilter = tasksToFilter.filter(task => task.assignee_ids.includes(user.uid!));
+            tasksToFilter = tasksToFilter.filter(task => task.assignee_ids && task.assignee_ids.includes(user.uid!));
         } else if (initialFilterParam === "created") {
             tasksToFilter = tasksToFilter.filter(task => task.created_by_id === user.uid);
         }
-        // "overdue" is handled by status filter
     }
     
     return tasksToFilter
@@ -121,20 +114,26 @@ export default function TasksPage() {
 
 
   const handleEditTask = (task: Task) => {
-    if (user?.uid !== task.created_by_id) {
-      toast({ title: "Permission Denied", description: `Only the creator can edit task: ${task.title}.`, variant: "destructive"});
-      return;
-    }
+    // Creator check removed here. Non-creators can navigate to edit page.
+    // TaskForm and Firestore rules will handle actual edit permissions.
     router.push(`/tasks/${task.id}/edit`);
   };
 
   const confirmDeleteTask = async () => {
     if (!taskToDelete) return;
-    const taskTitle = tasks.find(t => t.id === taskToDelete)?.title || "Task";
+    const taskBeingDeleted = tasks.find(t => t.id === taskToDelete);
+    if (!taskBeingDeleted) return;
+
+    if (user?.uid !== taskBeingDeleted.created_by_id) {
+      toast({ title: "Permission Denied", description: "Only the task creator can delete this task.", variant: "destructive"});
+      setTaskToDelete(null);
+      return;
+    }
+
     try {
       await apiDeleteTask(taskToDelete); 
       setTasks(prevTasks => prevTasks.filter(t => t.id !== taskToDelete));
-      toast({ title: "Task Deleted", description: `"${taskTitle}" has been deleted.` });
+      toast({ title: "Task Deleted", description: `"${taskBeingDeleted.title}" has been deleted.` });
     } catch (error: any) {
       toast({ title: "Error Deleting Task", description: error.message || "Could not delete task.", variant: "destructive" });
     } finally {
@@ -181,7 +180,14 @@ export default function TasksPage() {
               key={task.id} 
               task={task} 
               onEdit={handleEditTask} 
-              onDelete={() => setTaskToDelete(task.id)}
+              onDelete={() => {
+                const taskToDeleteRef = tasks.find(t => t.id === task.id);
+                if (taskToDeleteRef && user?.uid !== taskToDeleteRef.created_by_id) {
+                   toast({ title: "Permission Denied", description: "Only the task creator can delete this task.", variant: "destructive"});
+                   return;
+                }
+                setTaskToDelete(task.id);
+              }}
             />
           ))}
         </div>
