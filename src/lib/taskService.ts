@@ -3,32 +3,12 @@ import type { Task, Profile, TaskStatus, Comment } from './types';
 import type { AppUser } from './auth';
 import type { SupabaseClient, RealtimeChannel, PostgrestError } from '@supabase/supabase-js';
 import { formatISO, parseISO, isBefore } from 'date-fns';
-import type { Database } from '@/lib/types/supabase';
+import type { Database } from '@/lib/types/supabase'; // Ensure this path is correct
 
-// Helper to convert Supabase timestamp strings (which should be ISO) to consistent ISO strings for dates if needed,
-// though Supabase typically returns them as ISO strings already.
-const processTimestampsInDoc = (docData: any): any => {
-  const data = { ...docData };
-  // Supabase returns ISO strings, so direct use is usually fine.
-  // Conversion might be needed if manipulating Date objects.
-  // For now, assume due_date, created_at, updated_at are valid ISO strings from Supabase.
-  // Comments createdAt should also be an ISO string.
-  if (data.comments && Array.isArray(data.comments)) {
-    data.comments = data.comments.map((comment: any) => {
-      if (comment.createdAt && typeof comment.createdAt === 'string') {
-        try {
-            parseISO(comment.createdAt); // Validate
-            return comment;
-        } catch (e) {
-            return { ...comment, createdAt: new Date().toISOString() }; // Fallback
-        }
-      }
-      return comment;
-    });
-  }
-  return data;
-};
+// Type for the JSONB comments column
+type Json = Database['public']['']['']['']; // Adjusted to be more general if specific schema isn't known for comments only
 
+// Represents the raw row from the 'tasks' table, possibly before profile data is joined/resolved.
 type TaskRowWithPossibleProfile = Database['public']['Tables']['tasks']['Row'];
 
 
@@ -41,58 +21,56 @@ export const processTask = async (
     // console.error("processTask: Task data is invalid or missing ID.", taskDataFromDb);
     throw new Error(`Task data is invalid or missing ID.`);
   }
-
-  const taskData = processTimestampsInDoc(taskDataFromDb);
   
   const now = new Date();
   let dueDateValid = false;
   let parsedDueDate: Date | null = null;
-  if (taskData.due_date) {
+  if (taskDataFromDb.due_date) {
     try {
-      parsedDueDate = parseISO(taskData.due_date);
+      parsedDueDate = parseISO(taskDataFromDb.due_date);
       dueDateValid = !isNaN(parsedDueDate.getTime());
     } catch (e) {
-      // console.warn(`Invalid due_date format for task ${taskData.id}: ${taskData.due_date}`);
+      // console.warn(`Invalid due_date format for task ${taskDataFromDb.id}: ${taskDataFromDb.due_date}`);
       dueDateValid = false;
     }
   }
   
-  const isOverdue = taskData.status !== 'Done' && dueDateValid && parsedDueDate && isBefore(parsedDueDate, now);
-
+  const isOverdue = taskDataFromDb.status !== 'Done' && dueDateValid && parsedDueDate && isBefore(parsedDueDate, now);
 
   let assignees: Profile[] = [];
-  if (taskData.assignee_ids && Array.isArray(taskData.assignee_ids)) {
-    for (const assigneeId of taskData.assignee_ids) {
-      const profile = profilesMap.get(assigneeId);
-      if (profile) {
-        assignees.push(profile);
+  if (taskDataFromDb.assignee_ids && Array.isArray(taskDataFromDb.assignee_ids)) {
+    for (const assigneeId of taskDataFromDb.assignee_ids) {
+      if (assigneeId) { // Ensure assigneeId is not null
+        const profile = profilesMap.get(assigneeId);
+        if (profile) {
+          assignees.push(profile);
+        }
       }
     }
   }
   
-  const createdByProfile = taskData.created_by_id ? profilesMap.get(taskData.created_by_id) : null;
+  const createdByProfile = taskDataFromDb.created_by_id ? profilesMap.get(taskDataFromDb.created_by_id) : null;
 
-  const currentComments = (taskData.comments as Comment[] | null) || [];
+  const currentComments = (taskDataFromDb.comments as Comment[] | null) || [];
   const sortedComments = [...currentComments].sort((a: Comment, b: Comment) => {
     const dateA = a.createdAt ? parseISO(a.createdAt).getTime() : 0;
     const dateB = b.createdAt ? parseISO(b.createdAt).getTime() : 0;
     return dateB - dateA;
   });
 
-
   return {
-    id: taskData.id!,
-    title: taskData.title || 'Untitled Task',
-    description: taskData.description || null,
-    due_date: taskData.due_date || null,
-    priority: (taskData.priority as TaskPriority) || 'Medium',
-    status: isOverdue ? 'Overdue' : (taskData.status as TaskStatus) || 'To Do',
-    assignee_ids: taskData.assignee_ids || [],
+    id: taskDataFromDb.id!,
+    title: taskDataFromDb.title || 'Untitled Task',
+    description: taskDataFromDb.description || null,
+    due_date: taskDataFromDb.due_date || null,
+    priority: (taskDataFromDb.priority as TaskPriority) || 'Medium',
+    status: isOverdue ? 'Overdue' : (taskDataFromDb.status as TaskStatus) || 'To Do',
+    assignee_ids: taskDataFromDb.assignee_ids || [],
     assignees: assignees.length > 0 ? assignees : null, 
-    created_by_id: taskData.created_by_id!,
+    created_by_id: taskDataFromDb.created_by_id!,
     created_by: createdByProfile, 
-    created_at: taskData.created_at || new Date().toISOString(),
-    updated_at: taskData.updated_at || new Date().toISOString(),
+    created_at: taskDataFromDb.created_at || new Date().toISOString(),
+    updated_at: taskDataFromDb.updated_at || new Date().toISOString(),
     comments: sortedComments,
   } as Task;
 };
@@ -116,8 +94,13 @@ const getSpecificProfilesMap = async (profileIds: string[]): Promise<Map<string,
   if (!profileIds || profileIds.length === 0) {
     return new Map();
   }
+  const uniqueProfileIds = Array.from(new Set(profileIds.filter(id => id !== null))); // Filter out nulls before Set
+  if (uniqueProfileIds.length === 0) {
+    return new Map();
+  }
+
   const profilesMap = new Map<string, Profile>();
-  const { data, error } = await supabase.from('profiles').select('*').in('id', profileIds);
+  const { data, error } = await supabase.from('profiles').select('*').in('id', uniqueProfileIds);
   if (error) {
     console.error('Error fetching specific profiles for map:', error);
     return profilesMap; // Return empty map on error
@@ -135,6 +118,8 @@ export const getTasks = async (userId?: string): Promise<Task[]> => {
   let query = supabase.from('tasks').select('*').order('created_at', { ascending: false });
 
   if (userId) {
+    // Ensure `assignee_ids` is the correct column name for an array of UUIDs.
+    // The .cs operator means "contains" for arrays.
     query = query.or(`created_by_id.eq.${userId},assignee_ids.cs.{${userId}}`);
   }
 
@@ -150,14 +135,12 @@ export const getTasks = async (userId?: string): Promise<Task[]> => {
   return Promise.all(tasksPromises);
 };
 
-
 export const getDashboardTasks = async (userId: string): Promise<{ assignedTasks: Task[], createdTasks: Task[], overdueTasks: Task[] }> => {
   const allUserTasks = await getTasks(userId); 
 
   const assignedToUser = allUserTasks.filter(
     task => task.assignee_ids && 
             task.assignee_ids.includes(userId) &&
-            // task.created_by_id === userId && // Removed: Show tasks assigned to user even if not created by them
             task.status !== 'Done' && 
             task.status !== 'Overdue'
   );
@@ -173,6 +156,7 @@ export const getDashboardTasks = async (userId: string): Promise<{ assignedTasks
   };
 };
 
+
 export const addTask = async (
   taskData: Omit<Task, 'id' | 'created_at' | 'updated_at' | 'status' | 'assignees' | 'created_by' | 'comments'> & { status: Exclude<TaskStatus, "Overdue">; created_by_id: string },
   currentUserProfile?: Profile | null
@@ -186,7 +170,7 @@ export const addTask = async (
     status: taskData.status,
     assignee_ids: taskData.assignee_ids, // taskData.assignee_ids is string[] due to form schema
     created_by_id: taskData.created_by_id,
-    comments: [] as unknown as Json, // Cast to Json as per Supabase type
+    comments: [] as unknown as Json, 
   };
 
   const { data: insertedTaskData, error } = await supabase
@@ -219,8 +203,7 @@ export const addTask = async (
     profileIdsToFetch.push(...insertedTaskData.assignee_ids.filter(id => id !== null) as string[]);
   }
   
-  const uniqueProfileIds = Array.from(new Set(profileIdsToFetch));
-  const profilesMap = await getSpecificProfilesMap(uniqueProfileIds);
+  const profilesMap = await getSpecificProfilesMap(profileIdsToFetch);
 
   if (currentUserProfile) {
     profilesMap.set(currentUserProfile.id, currentUserProfile);
@@ -269,7 +252,7 @@ export const updateTask = async (
       throw fetchError;
     }
     const existingComments = (existingTask?.comments as Comment[] || []);
-    updatePayload.comments = [...existingComments, newComment] as unknown as Json; // Cast to Json
+    updatePayload.comments = [...existingComments, newComment] as unknown as Json;
   }
   
   updatePayload.updated_at = new Date().toISOString(); 
@@ -317,7 +300,7 @@ export const getProfilesForDropdown = async (): Promise<Profile[]> => {
 export const onTasksUpdate = (
   userId: string,
   callback: (data: { tasks: Task[]; isLoading: boolean; error?: PostgrestError | null }) => void,
-  supabaseClient: SupabaseClient<Database> // Explicitly type supabaseClient
+  supabaseClient: SupabaseClient<Database>
 ): (() => void) => {
   
   if (typeof callback !== 'function') {
@@ -335,7 +318,7 @@ export const onTasksUpdate = (
       const { data: tasksData, error } = await supabaseClient
         .from('tasks')
         .select(`*`) 
-        .or(`created_by_id.eq.${userId},assignee_ids.cs.{${userId}}`) // Ensure assignee_ids is correct column name
+        .or(`created_by_id.eq.${userId},assignee_ids.cs.{${userId}}`)
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -407,8 +390,9 @@ export const onTasksUpdate = (
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'tasks' },
-      (payload) => {
-        fetchAndProcessTasks(); 
+      async (payload) => {
+        console.log(`Realtime event for tasks received by user ${userId}:`, payload);
+        await fetchAndProcessTasks(); 
       }
     )
     .subscribe((status, err) => {
