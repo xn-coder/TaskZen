@@ -2,7 +2,7 @@
 import { supabase } from './supabaseClient';
 import type { Task, Profile, TaskStatus, Comment } from './types';
 import type { AppUser } from './auth';
-import type { SupabaseClient, RealtimeChannel } from '@supabase/supabase-js'; // Added RealtimeChannel
+import type { SupabaseClient, RealtimeChannel, PostgrestError } from '@supabase/supabase-js';
 import { formatISO, parseISO, isBefore } from 'date-fns';
 
 // Helper to convert Supabase timestamp strings (which should be ISO) to consistent ISO strings for dates if needed,
@@ -30,19 +30,19 @@ const processTimestampsInDoc = (docData: any): any => {
 };
 
 export const processTask = async (
-    taskDataFromDb: Partial<Database['public']['Tables']['tasks']['Row'] & { id: string }>, // Expect at least id
+    taskDataFromDb: Partial<Database['public']['Tables']['tasks']['Row'] & { id: string }>, 
     profilesMap: Map<string, Profile>
   ): Promise<Task> => {
   
   if (!taskDataFromDb || !taskDataFromDb.id) {
+    // console.error("processTask: Task data is invalid or missing ID.", taskDataFromDb);
     throw new Error(`Task data is invalid or missing ID.`);
   }
 
   const taskData = processTimestampsInDoc(taskDataFromDb);
   
   const now = new Date();
-  // Ensure due_date is valid before parsing
-  const dueDate = taskData.due_date ? parseISO(taskData.due_date) : new Date(0); // Treat null/undefined due_date as very past
+  const dueDate = taskData.due_date ? parseISO(taskData.due_date) : new Date(0); 
   const isOverdue = taskData.status !== 'Done' && taskData.due_date && isBefore(dueDate, now);
 
   let assignees: Profile[] = [];
@@ -66,7 +66,7 @@ export const processTask = async (
     title: taskData.title || 'Untitled Task',
     description: taskData.description || null,
     due_date: taskData.due_date || null,
-    priority: taskData.priority || 'Medium',
+    priority: (taskData.priority as TaskPriority) || 'Medium',
     status: isOverdue ? 'Overdue' : (taskData.status as TaskStatus) || 'To Do',
     assignee_ids: taskData.assignee_ids || [],
     assignees: assignees.length > 0 ? assignees : null, 
@@ -98,9 +98,6 @@ export const getTasks = async (userId?: string): Promise<Task[]> => {
   let query = supabase.from('tasks').select('*').order('created_at', { ascending: false });
 
   if (userId) {
-    // Fetch tasks where user is creator OR an assignee
-    // Supabase OR condition: .or(`created_by_id.eq.${userId},assignee_ids.cs.{${userId}}`)
-    // cs.{value} checks if array contains value.
     query = query.or(`created_by_id.eq.${userId},assignee_ids.cs.{${userId}}`);
   }
 
@@ -139,34 +136,42 @@ export const addTask = async (
   taskData: Omit<Task, 'id' | 'created_at' | 'updated_at' | 'status' | 'assignees' | 'created_by' | 'comments'> & { status: Exclude<TaskStatus, "Overdue">; created_by_id: string }
 ): Promise<Task> => {
   
-  const payloadToInsert = {
+  const payloadToInsert: Omit<Database['public']['Tables']['tasks']['Insert'], 'id' | 'created_at' | 'updated_at' | 'comments'> & {comments?: any} = {
     title: taskData.title,
     description: taskData.description || null,
-    due_date: taskData.due_date ? parseISO(taskData.due_date).toISOString() : null, // Ensure ISO format
+    due_date: taskData.due_date ? parseISO(taskData.due_date).toISOString() : null,
     priority: taskData.priority,
-    status: taskData.status,
+    status: taskData.status, // This is Exclude<TaskStatus, "Overdue">
     assignee_ids: taskData.assignee_ids || null,
     created_by_id: taskData.created_by_id,
-    comments: [], // Initialize with empty array for comments
-    // created_at and updated_at will be set by default in DB
+    comments: [] as Comment[],
   };
 
-  const { data: newTaskData, error } = await supabase
+  const { data, error } = await supabase
     .from('tasks')
     .insert(payloadToInsert)
     .select()
-    .single(); // Assuming insert returns the created row
+    .single();
 
-  if (error) {
-    console.error("Error adding task to Supabase:", error);
-    throw error;
-  }
-  if (!newTaskData) {
-    throw new Error("Failed to create task: No data returned after insert.");
+  if (error || !data) {
+    const logMessage = "Error adding task to Supabase:";
+    if (error) {
+      console.error(logMessage, error);
+      // Check if the error is a PostgrestError for more details
+      if (typeof error === 'object' && 'message' in error) {
+        const pgError = error as PostgrestError;
+        throw new Error(`Failed to create task: ${pgError.message} (Code: ${pgError.code})`);
+      } else {
+        throw new Error('Failed to create task due to an unknown error.');
+      }
+    } else {
+      console.error(logMessage, "No data returned after insert, and no explicit error object.");
+    }
+    throw new Error(error?.message || 'Failed to create task or retrieve it after creation.');
   }
   
   const profilesMap = await getAllProfilesMap();
-  return processTask(newTaskData, profilesMap); 
+  return processTask(data, profilesMap); 
 };
 
 
@@ -180,13 +185,12 @@ export const updateTask = async (
 ): Promise<Task> => {
   
   const updatePayload: any = { ...taskUpdates };
-  delete updatePayload.id; // Ensure id is not in payload for update
+  delete updatePayload.id; 
 
   if (taskUpdates.due_date) {
     updatePayload.due_date = parseISO(taskUpdates.due_date).toISOString();
   }
   
-  // Handle comments
   if (newCommentText && newCommentText.trim() !== "" && currentUser && currentUser.id && currentUser.profile) {
     const newComment: Comment = {
       userId: currentUser.id,
@@ -194,7 +198,6 @@ export const updateTask = async (
       text: newCommentText.trim(),
       createdAt: new Date().toISOString(),
     };
-    // Fetch existing comments, append, then update
     const { data: existingTask, error: fetchError } = await supabase
       .from('tasks')
       .select('comments')
@@ -209,7 +212,7 @@ export const updateTask = async (
     updatePayload.comments = [...existingComments, newComment];
   }
   
-  updatePayload.updated_at = new Date().toISOString(); // Manually set updated_at for Supabase
+  updatePayload.updated_at = new Date().toISOString(); 
 
   const { data: updatedTaskData, error } = await supabase
     .from('tasks')
@@ -251,66 +254,66 @@ export const getProfilesForDropdown = async (): Promise<Profile[]> => {
 };
 
 
-// Realtime task updates using Supabase
 export const onTasksUpdate = (
   userId: string,
-  callback: (data: { tasks: Task[]; isLoading: boolean }) => void,
-  supabaseClient: SupabaseClient<Database> // Pass the Supabase client instance
-): (() => void) => { // Returns an unsubscribe function
+  callback: (data: { tasks: Task[]; isLoading: boolean; error?: PostgrestError | null }) => void,
+  supabaseClient: SupabaseClient<Database>
+): (() => void) => {
   
   if (typeof callback !== 'function') {
     console.error("onTasksUpdate: Callback is not a function.");
     return () => {}; 
   }
   
-  callback({ tasks: [], isLoading: true });
+  callback({ tasks: [], isLoading: true, error: null });
   let channel: RealtimeChannel | null = null;
 
   const fetchAndProcessTasks = async () => {
     try {
-      // Re-fetch all tasks relevant to the user.
-      // This could be optimized to fetch only changed tasks if Supabase Realtime payload provides enough info.
-      const profilesMap = await getAllProfilesMap(); // Re-fetch profiles in case they changed
+      const profilesMap = await getAllProfilesMap();
       
       const { data: tasksData, error } = await supabaseClient
         .from('tasks')
         .select('*')
-        .or(`created_by_id.eq.${userId},assignee_ids.cs.{${userId}}`) // cs for array contains
+        .or(`created_by_id.eq.${userId},assignee_ids.cs.{${userId}}`)
         .order('created_at', { ascending: false });
 
       if (error) {
-        console.error('Error fetching tasks for real-time update:', error);
-        callback({ tasks: [], isLoading: false }); // Send empty on error, stop loading
+        let logMessage = `Error fetching tasks for real-time update for userId: ${userId}.`;
+        console.error(logMessage, error); // Log the error object itself
+        callback({ tasks: [], isLoading: false, error });
         return;
       }
 
       const processedTasks = await Promise.all(
         (tasksData || []).map(taskDoc => processTask(taskDoc, profilesMap))
       );
-      callback({ tasks: processedTasks, isLoading: false });
-    } catch (e) {
-      console.error('Exception in fetchAndProcessTasks:', e);
-      callback({ tasks: [], isLoading: false });
+      callback({ tasks: processedTasks, isLoading: false, error: null });
+    } catch (e: any) {
+      const logMessage = `Exception in fetchAndProcessTasks for userId: ${userId}.`;
+      if (e && typeof e === 'object' && 'message' in e) {
+         const pgError = e as PostgrestError;
+         console.error(
+          logMessage,
+          `Message: ${pgError.message || 'N/A'}, Code: ${pgError.code || 'N/A'}, Details: ${pgError.details || 'N/A'}, Hint: ${pgError.hint || 'N/A'}. Raw error:`,
+          e 
+        );
+        callback({ tasks: [], isLoading: false, error: pgError });
+      } else {
+        console.error(logMessage, "Unknown error structure:", e);
+        callback({ tasks: [], isLoading: false, error: { message: "Unknown error occurred", code: "UNKNOWN", details: "", hint: "" } as PostgrestError });
+      }
     }
   };
 
-  // Initial fetch
   fetchAndProcessTasks();
 
-  // Set up Supabase Realtime channel
   channel = supabaseClient
-    .channel(`public:tasks:user-${userId}`) // Unique channel name per user or general tasks
+    .channel(`public:tasks:user-${userId}`)
     .on(
       'postgres_changes',
-      { event: '*', schema: 'public', table: 'tasks', 
-        // Optional filter: filter for tasks where user is creator or assignee
-        // This filter might be complex and better handled by re-fetching all relevant tasks on any change signal.
-        // filter: `created_by_id=eq.${userId} OR assignee_ids=cs.{${userId}}`
-      },
+      { event: '*', schema: 'public', table: 'tasks' },
       (payload) => {
-        // console.log('Supabase Realtime: Change received!', payload);
-        // Re-fetch tasks when a change occurs.
-        // This is simpler than trying to merge payload.new/old, especially with joins/processing.
         fetchAndProcessTasks();
       }
     )
@@ -319,12 +322,22 @@ export const onTasksUpdate = (
         // console.log(`User ${userId} subscribed to tasks realtime!`);
       }
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-        console.error(`Realtime channel error for user ${userId}:`, status, err);
-        // Optionally, try to resubscribe or notify user
+        let errorMessage = `Realtime channel error for user ${userId}: ${status}`;
+        if (err && typeof err === 'object' && 'message' in err) {
+          const channelError = err as Error; // Or specific type if known
+          errorMessage += `. Message: ${channelError.message}`;
+           console.error(errorMessage, err); // Log the full error object
+        } else if (err) {
+          errorMessage += `. Details: ${JSON.stringify(err)}`;
+          console.error(errorMessage, err);
+        } else {
+           console.error(errorMessage, "Error object was undefined or not an object.");
+        }
+        // Consider how to notify the callback about channel errors
+        // For now, it might trigger a re-fetch which could fail and set the error state.
       }
     });
   
-  // Return unsubscribe function
   return () => {
     if (channel) {
       supabaseClient.removeChannel(channel)
@@ -335,5 +348,4 @@ export const onTasksUpdate = (
   };
 };
 
-// Import Database type from supabase.ts (generated types)
 import type { Database } from '@/lib/types/supabase';
