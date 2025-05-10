@@ -1,24 +1,25 @@
+
 "use client";
 
-import type { PostgrestError } from '@supabase/supabase-js';
-import { useEffect, useState, useMemo } from 'react';
-import { useParams, useRouter } from 'next/navigation';
-import { useAuth } from '@/contexts/AuthContext';
+import type { PostgrestError } from "@supabase/supabase-js";
+import { useEffect, useState, useMemo } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { supabase } from '@/lib/supabaseClient';
-import type { Task, Profile, Comment, TaskStatus } from '@/lib/types'; 
-import { TASK_EDITABLE_STATUSES } from '@/lib/constants';
-import { processTask, getAllProfilesMap, updateTask as apiUpdateTask, deleteTask as apiDeleteTask } from '@/lib/taskService'; 
-import { Loader2, AlertTriangle, CalendarDays, Users, Tag, MessageSquare, Send, Edit, Trash2, UserCircle } from 'lucide-react';
+import { supabase } from "@/lib/supabaseClient";
+import type { Task, Profile, Comment, TaskStatus } from "@/lib/types";
+import { TASK_EDITABLE_STATUSES } from "@/lib/constants";
+import { processTask, getAllProfilesMap, updateTask as apiUpdateTask, deleteTask as apiDeleteTask } from "@/lib/taskService";
+import { Loader2, AlertTriangle, CalendarDays, Users, Tag, MessageSquare, Send, Edit, Trash2, UserCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
-import { Button } from '@/components/ui/button';
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar';
-import { Badge } from '@/components/ui/badge';
-import { Textarea } from '@/components/ui/textarea';
+import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Separator } from '@/components/ui/separator';
-import { format, parseISO, formatDistanceToNow } from 'date-fns';
-import Link from 'next/link';
+import { Separator } from "@/components/ui/separator";
+import { format, parseISO, formatDistanceToNow } from "date-fns";
+import Link from "next/link";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,15 +30,15 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { cn } from '@/lib/utils';
+import { cn } from "@/lib/utils";
 
 export default function TaskDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const { user: currentUser, isInitialLoading: authLoading, realtimeTasks } = useAuth(); 
+  const { user: currentUser, isInitialLoading: authLoading, realtimeTasks } = useAuth();
   const { toast } = useToast();
 
-  const taskId = typeof params.id === 'string' ? params.id : null;
+  const taskId = typeof params.id === "string" ? params.id : null;
 
   const [task, setTask] = useState<Task | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -67,51 +68,50 @@ export default function TaskDetailPage() {
         .single();
 
       if (fetchError) {
-        // Throw the error to be caught by the catch block for centralized handling
         throw fetchError;
       }
       
       if (taskDataFromDb) {
         const profilesMap = await getAllProfilesMap();
-        // taskDataFromDb will now have `created_by_profile` field if the join is successful
-        // processTask will use it or fall back to profilesMap if needed.
-        const processedTask = await processTask(taskDataFromDb, profilesMap); 
+        const processedTask = await processTask(taskDataFromDb, profilesMap);
         setTask(processedTask);
-        setSelectedStatus(processedTask.status === 'Overdue' ? 'To Do' : processedTask.status); 
+        setSelectedStatus(processedTask.status === "Overdue" ? "To Do" : processedTask.status);
       } else {
-        // This case should ideally be caught by fetchError with PGRST116 if .single() finds no rows
         throw { code: 'PGRST116', message: 'Task not found (no data returned).' };
       }
     } catch (e: any) {
-      setIsLoading(false); 
+      setIsLoading(false);
       let uiError = "Failed to load task details.";
       let toastMessage = "An unexpected error occurred. Please try again.";
       let errorTitle = "Error Loading Task";
-
-      // The initial generic logging block has been removed.
-      // Detailed analysis of 'e' follows.
+      
+      // Log the raw error object for better diagnostics before specific checks
+      if (typeof e === 'object' && e !== null && Object.keys(e).length === 0 && !(e as PostgrestError).message && !(e as PostgrestError).details) {
+        console.warn("fetchTaskDetails: An empty error object {} was caught initially. This could be due to network issues, RLS, or an unspecific error from Supabase. Detailed analysis follows.", e);
+      } else {
+        console.error("Full error object in fetchTaskDetails:", e); // Original line, now part of conditional logging
+      }
 
       const pgError = e as PostgrestError; // Attempt to cast for common properties
 
       if (e && typeof e === 'object') {
-        if (pgError.code === 'PGRST116') { // Resource not found
+        if (pgError.code === 'PGRST116') { 
           uiError = "Task not found.";
           toastMessage = "The requested task could not be found.";
-          if (typeof window !== "undefined" && !router.asPath.startsWith('/tasks')) { 
+          if (typeof window !== "undefined" && !router.asPath.startsWith('/tasks')) {
              router.replace('/tasks');
           }
-        } else if (pgError.message || pgError.code) { // If it has a message or code, treat as PostgrestError
+        } else if (pgError.message || pgError.code) { 
           uiError = `Error: ${pgError.message || `Code ${pgError.code}`}`;
           toastMessage = pgError.message || `An error occurred (Code: ${pgError.code}).`;
           if (pgError.details) toastMessage += ` Details: ${pgError.details}`;
           if (pgError.hint) toastMessage += ` Hint: ${pgError.hint}`;
            console.error(`fetchTaskDetails: PostgrestError. Code: ${pgError.code || 'N/A'}, Message: "${pgError.message || 'N/A'}", Details: "${pgError.details || 'N/A'}", Hint: "${pgError.hint || 'N/A'}"`, e);
-        } else if (Object.keys(e).length === 0 ) { // It's an object, but no Postgrest properties, and it's empty
+        } else if (Object.keys(e).length === 0 ) { 
            uiError = "An empty error object was received while fetching task details.";
            toastMessage = "An unexpected issue occurred. This might be a network problem or misconfiguration. Check console for details.";
            console.error("fetchTaskDetails: Confirmed empty error object with no identifiable Postgrest properties. This is unusual and may indicate network issues, RLS problems, or Supabase client behavior that needs investigation.", e);
         } else {
-          // Fallback for other object-type errors that aren't PGRST116 or clearly empty with no Postgrest props.
           uiError = "An unexpected object-based error occurred.";
           toastMessage = "An issue occurred while loading task details. Check console.";
           console.error("fetchTaskDetails: Caught an unexpected object-type error that is not a typical PostgrestError and not empty:", e);
@@ -121,7 +121,6 @@ export default function TaskDetailPage() {
         toastMessage = e;
         console.error("fetchTaskDetails: Caught a string error:", e);
       } else {
-        // For any other type of error (null, undefined, number, boolean etc.)
         uiError = "An unknown error type was encountered.";
         toastMessage = "An unexpected issue of unknown type occurred.";
         console.error("fetchTaskDetails: Caught an error of unknown type:", e);
@@ -151,20 +150,17 @@ export default function TaskDetailPage() {
       setIsLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId, currentUser?.id, authLoading]); // Depend on currentUser.id for re-fetch if user changes
+  }, [taskId, currentUser?.id, authLoading]); 
 
 
   useEffect(() => {
     if (taskId && realtimeTasks && realtimeTasks.length > 0 && task) {
       const contextTask = realtimeTasks.find(t => t.id === taskId);
       if (contextTask) {
-        // Only update if there's a meaningful difference to avoid loops,
-        // e.g., based on updated_at or a deep comparison if necessary.
-        // For simplicity, a shallow check on updated_at.
         if (task.updated_at !== contextTask.updated_at || task.status !== contextTask.status || JSON.stringify(task.comments) !== JSON.stringify(contextTask.comments)) {
             setTask(contextTask);
-            if (contextTask.status !== selectedStatus && (contextTask.status !== 'Overdue' || selectedStatus === 'Overdue')) {
-                setSelectedStatus(contextTask.status === 'Overdue' ? 'To Do' : contextTask.status);
+            if (contextTask.status !== selectedStatus && (contextTask.status !== "Overdue" || selectedStatus === "Overdue")) {
+                setSelectedStatus(contextTask.status === "Overdue" ? "To Do" : contextTask.status);
             }
         }
       }
@@ -177,9 +173,7 @@ export default function TaskDetailPage() {
     if (!newComment.trim() || !currentUser || !task) return;
     setIsSubmittingComment(true);
     try {
-      // The apiUpdateTask in taskService now handles fetching the full task with resolved profiles
       const updatedTask = await apiUpdateTask(task.id, {}, newComment.trim(), currentUser);
-      // setTask(updatedTask); // AuthContext's realtimeTasks will update this from subscription
       setNewComment("");
       toast({ title: "Comment Added", description: "Your comment has been posted." });
     } catch (e: any) {
@@ -194,28 +188,26 @@ export default function TaskDetailPage() {
     if (!task || !currentUser || newStatus === task.status) return;
     if (newStatus === "Overdue" && task.status !== "Overdue") {
         toast({ title: "Invalid Status", description: "Cannot manually set status to Overdue.", variant: "destructive" });
-        setSelectedStatus(task.status === 'Overdue' ? 'To Do' : task.status);
+        setSelectedStatus(task.status === "Overdue" ? "To Do" : task.status);
         return;
     }
 
     setIsUpdatingStatus(true);
     try {
-        // apiUpdateTask handles creating a comment for status change and fetching updated task
         const commentText = `Status changed from ${task.status} to ${newStatus}.`;
         const updatedTask = await apiUpdateTask(task.id, { status: newStatus as Exclude<TaskStatus, "Overdue"> }, commentText, currentUser);
-        // setTask(updatedTask); // Realtime update handles this
-        setSelectedStatus(newStatus); // Optimistically update local UI for select
+        setSelectedStatus(newStatus); 
         toast({ title: "Status Updated", description: `Task status changed to ${newStatus}.` });
     } catch (e: any) {
         console.error("Error updating status:", e);
         toast({ title: "Error", description: e.message || "Failed to update task status.", variant: "destructive" });
-        setSelectedStatus(task.status === 'Overdue' ? 'To Do' : task.status); 
+        setSelectedStatus(task.status === "Overdue" ? "To Do" : task.status);
     } finally {
         setIsUpdatingStatus(false);
     }
   };
 
-  const handleDeleteTaskAction = async () => { 
+  const handleDeleteTaskAction = async () => {
     if (!task || !currentUser || currentUser.id !== task.created_by_id) {
       toast({ title: "Permission Denied", description: "Only the task creator can delete this task.", variant: "destructive" });
       setShowDeleteConfirm(false);
@@ -256,9 +248,6 @@ export default function TaskDetailPage() {
   }
 
   if (!task) {
-    // This might be hit if fetchTaskDetails completes without error but task is still null
-    // (e.g. if router.replace was called but component hasn't unmounted yet)
-    // Or if initial state for task is null and loading finishes before task is set.
     return (
       <div className="flex h-full items-center justify-center p-4 sm:p-8">
         <p className="text-base sm:text-lg text-muted-foreground">Task data is unavailable or being redirected.</p>
@@ -311,13 +300,13 @@ export default function TaskDetailPage() {
                   <div key={index} className="flex items-start space-x-3">
                     <Avatar className="h-6 w-6 sm:h-8 sm:w-8 mt-1">
                        <AvatarImage src={`https://avatar.vercel.sh/${comment.userId}.png`} alt={comment.userName} data-ai-hint="profile avatar" />
-                       <AvatarFallback>{comment.userName ? comment.userName.charAt(0).toUpperCase() : 'U'}</AvatarFallback>
+                       <AvatarFallback>{comment.userName ? comment.userName.charAt(0).toUpperCase() : "U"}</AvatarFallback>
                     </Avatar>
                     <div className="flex-1 bg-muted/50 p-2 sm:p-3 rounded-lg">
                       <div className="flex justify-between items-center">
                         <p className="text-xs sm:text-sm font-medium text-foreground">{comment.userName}</p>
                         <p className="text-xs text-muted-foreground">
-                          {comment.createdAt ? formatDistanceToNow(parseISO(comment.createdAt), { addSuffix: true }) : 'Recently'}
+                          {comment.createdAt ? formatDistanceToNow(parseISO(comment.createdAt), { addSuffix: true }) : "Recently"}
                         </p>
                       </div>
                       <p className="text-xs sm:text-sm text-foreground/90 mt-1 whitespace-pre-wrap break-words">{comment.text}</p>
@@ -353,8 +342,8 @@ export default function TaskDetailPage() {
             <div>
               <h4 className="text-sm sm:text-md font-semibold mb-2 text-muted-foreground">Status</h4>
               {canUpdateStatusOrComment ? (
-                <Select 
-                    value={selectedStatus} 
+                <Select
+                    value={selectedStatus}
                     onValueChange={(value) => handleStatusUpdate(value as TaskStatus)}
                     disabled={isUpdatingStatus}
                 >
@@ -386,7 +375,7 @@ export default function TaskDetailPage() {
               <h4 className="text-sm sm:text-md font-semibold mb-2 text-muted-foreground">Due Date</h4>
               <div className="flex items-center text-xs sm:text-sm text-foreground">
                 <CalendarDays className="mr-2 h-4 w-4 text-muted-foreground" />
-                {task.due_date ? format(parseISO(task.due_date), "MMMM d, yyyy") : 'Not set'}
+                {task.due_date ? format(parseISO(task.due_date), "MMMM d, yyyy") : "Not set"}
               </div>
             </div>
             <Separator />
@@ -395,13 +384,13 @@ export default function TaskDetailPage() {
                 <h4 className="text-sm sm:text-md font-semibold mb-2 text-muted-foreground">Created By</h4>
                 <div className="flex items-center space-x-2">
                   <Avatar className="h-6 w-6 sm:h-8 sm:w-8">
-                     <AvatarImage src={task.created_by.avatar_url || `https://avatar.vercel.sh/${task.created_by.email || task.created_by.id}.png`} alt={task.created_by.name || 'User'} data-ai-hint="profile avatar" />
-                     <AvatarFallback>{task.created_by.name ? task.created_by.name.charAt(0).toUpperCase() : 'U'}</AvatarFallback>
+                     <AvatarImage src={task.created_by.avatar_url || `https://avatar.vercel.sh/${task.created_by.email || task.created_by.id}.png`} alt={task.created_by.name || "User"} data-ai-hint="profile avatar" />
+                     <AvatarFallback>{task.created_by.name ? task.created_by.name.charAt(0).toUpperCase() : "U"}</AvatarFallback>
                   </Avatar>
-                  <span className="text-xs sm:text-sm text-foreground">{task.created_by.name || 'Unknown User'}</span>
+                  <span className="text-xs sm:text-sm text-foreground">{task.created_by.name || "Unknown User"}</span>
                 </div>
                  <p className="text-xs text-muted-foreground mt-1">
-                    On: {task.created_at ? format(parseISO(task.created_at), "MMM d, yyyy, hh:mm a") : 'N/A'}
+                    On: {task.created_at ? format(parseISO(task.created_at), "MMM d, yyyy, hh:mm a") : "N/A"}
                 </p>
               </div>
             )}
@@ -413,10 +402,10 @@ export default function TaskDetailPage() {
                   {task.assignees.map(assignee => (
                     <div key={assignee.id} className="flex items-center space-x-2">
                       <Avatar className="h-6 w-6 sm:h-8 sm:w-8">
-                        <AvatarImage src={assignee.avatar_url || `https://avatar.vercel.sh/${assignee.email || assignee.id}.png`} alt={assignee.name || 'User'} data-ai-hint="profile avatar"/>
-                        <AvatarFallback>{assignee.name ? assignee.name.charAt(0).toUpperCase() : 'U'}</AvatarFallback>
+                        <AvatarImage src={assignee.avatar_url || `https://avatar.vercel.sh/${assignee.email || assignee.id}.png`} alt={assignee.name || "User"} data-ai-hint="profile avatar"/>
+                        <AvatarFallback>{assignee.name ? assignee.name.charAt(0).toUpperCase() : "U"}</AvatarFallback>
                       </Avatar>
-                      <span className="text-xs sm:text-sm text-foreground">{assignee.name || 'Unknown User'}</span>
+                      <span className="text-xs sm:text-sm text-foreground">{assignee.name || "Unknown User"}</span>
                     </div>
                   ))}
                 </div>
@@ -425,7 +414,7 @@ export default function TaskDetailPage() {
              <Separator />
              <div>
                  <p className="text-xs text-muted-foreground">
-                    {task.updated_at ? `Last updated: ${formatDistanceToNow(parseISO(task.updated_at), { addSuffix: true })}` : 'Last updated: N/A'}
+                    {task.updated_at ? `Last updated: ${formatDistanceToNow(parseISO(task.updated_at), { addSuffix: true })}` : "Last updated: N/A"}
                 </p>
              </div>
           </aside>
