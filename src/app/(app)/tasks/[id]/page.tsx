@@ -1,4 +1,3 @@
-
 "use client";
 
 import type { PostgrestError } from "@supabase/supabase-js";
@@ -53,12 +52,14 @@ export default function TaskDetailPage() {
     if (!task || !task.comments) {
       return [];
     }
-    return [...task.comments].sort((a, b) => {
+    // Ensure comments are always treated as an array and provide defaults for createdAt.
+    return [...(Array.isArray(task.comments) ? task.comments : [])].sort((a, b) => {
         const dateA = a.createdAt ? parseISO(a.createdAt).getTime() : 0;
         const dateB = b.createdAt ? parseISO(b.createdAt).getTime() : 0;
-        return dateB - dateA;
+        return dateB - dateA; // Sort descending (newest first)
     });
-  }, [task]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task?.comments]); // Depend on task.comments for re-computation
 
   const fetchTaskDetails = async () => {
     if (!taskId || !currentUser) return;
@@ -109,7 +110,7 @@ export default function TaskDetailPage() {
           toastMessage = pgError.message || `An error occurred (Code: ${pgError.code}).`;
           if (pgError.details) toastMessage += ` Details: ${pgError.details}`;
           if (pgError.hint) toastMessage += ` Hint: ${pgError.hint}`;
-           console.error(`fetchTaskDetails: PostgrestError. Code: ${pgError.code || 'N/A'}, Message: "${pgError.message || 'N/A'}", Details: "${pgError.details || 'N/A'}", Hint: "${pgError.hint || 'N/A'}"`, e);
+           console.error(`fetchTaskDetails: PostgrestError. Code: ${pgError.code || 'N/A'}, Message: "${pgError.message || 'N/A'}", Details: "${pgError.details || 'N/A'}", Hint: "${pgError.hint || 'N/A'}"`);
         } else if (Object.keys(e).length === 0 ) { 
            uiError = "An empty error object was received while fetching task details.";
            toastMessage = "An unexpected issue occurred. This might be a network problem or misconfiguration. Check console for details.";
@@ -136,7 +137,7 @@ export default function TaskDetailPage() {
         variant: "destructive",
       });
     } finally {
-      setIsLoading(false); // Ensure isLoading is always set to false after attempting to fetch
+      setIsLoading(false); 
     }
   };
 
@@ -153,32 +154,38 @@ export default function TaskDetailPage() {
       setIsLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId, currentUser?.id, authLoading]); // Use currentUser?.id for stability
+  }, [taskId, currentUser?.id, authLoading]); 
 
 
   useEffect(() => {
-    if (taskId && realtimeTasks && realtimeTasks.length > 0 && task) {
+    if (taskId && realtimeTasks && realtimeTasks.length > 0) {
       const contextTask = realtimeTasks.find(t => t.id === taskId);
       if (contextTask) {
-        if (task.updated_at !== contextTask.updated_at || task.status !== contextTask.status || JSON.stringify(task.comments) !== JSON.stringify(contextTask.comments)) {
-            setTask(contextTask);
-            if (contextTask.status !== selectedStatus && (contextTask.status !== "Overdue" || selectedStatus === "Overdue")) {
-                setSelectedStatus(contextTask.status === "Overdue" ? "To Do" : contextTask.status);
-            }
+        // If local task doesn't exist yet OR its updated_at is different from contextTask
+        // This implies that if updated_at has changed, the entire task object (including comments) should be refreshed.
+        if (!task || (task.updated_at !== contextTask.updated_at)) {
+          setTask(contextTask); // Update local task state from the context
+
+          // Also update selectedStatus if it has changed in the contextTask
+          if (contextTask.status !== selectedStatus && (contextTask.status !== "Overdue" || selectedStatus === "Overdue")) {
+            setSelectedStatus(contextTask.status === "Overdue" ? "To Do" : contextTask.status);
+          }
         }
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [realtimeTasks, taskId, task]);
+  }, [realtimeTasks, taskId, task?.updated_at, selectedStatus]); // Depend on task.updated_at for re-evaluation
 
 
   const handleAddComment = async () => {
     if (!newComment.trim() || !currentUser || !task) return;
     setIsSubmittingComment(true);
     try {
+      // apiUpdateTask will update the task in DB, which triggers realtime update via AuthContext
       await apiUpdateTask(task.id, {}, newComment.trim(), currentUser);
-      setNewComment("");
+      setNewComment(""); // Clear input after successful submission
       toast({ title: "Comment Added", description: "Your comment has been posted." });
+      // No explicit setTask(updatedTask) here; relying on realtime flow.
     } catch (e: any) {
       console.error("Error adding comment:", e);
       toast({ title: "Error", description: e.message || "Failed to add comment.", variant: "destructive" });
@@ -198,13 +205,15 @@ export default function TaskDetailPage() {
     setIsUpdatingStatus(true);
     try {
         const commentText = `Status changed from ${task.status} to ${newStatus}.`;
+        // apiUpdateTask will update the task in DB, which triggers realtime update
         await apiUpdateTask(task.id, { status: newStatus as Exclude<TaskStatus, "Overdue"> }, commentText, currentUser);
-        setSelectedStatus(newStatus); 
+        // setSelectedStatus(newStatus); // No longer needed, will be updated by realtime flow
         toast({ title: "Status Updated", description: `Task status changed to ${newStatus}.` });
     } catch (e: any) {
         console.error("Error updating status:", e);
         toast({ title: "Error", description: e.message || "Failed to update task status.", variant: "destructive" });
-        setSelectedStatus(task.status === "Overdue" ? "To Do" : task.status);
+        // Revert selectedStatus if update fails, relying on realtime to eventually correct or show current DB state
+        setSelectedStatus(task.status === "Overdue" ? "To Do" : task.status); 
     } finally {
         setIsUpdatingStatus(false);
     }
@@ -219,7 +228,7 @@ export default function TaskDetailPage() {
     try {
       await apiDeleteTask(task.id);
       toast({ title: "Task Deleted", description: `Task "${task.title}" has been deleted.` });
-      router.push('/tasks');
+      router.push('/tasks'); // Navigate away after deletion
     } catch (error: any) {
       toast({ title: "Error Deleting Task", description: error.message || "Could not delete task.", variant: "destructive" });
     } finally {
