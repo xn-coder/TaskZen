@@ -1,4 +1,3 @@
-
 import { initializeApp, getApps, getApp, type FirebaseOptions } from 'firebase/app';
 import { getAuth, connectAuthEmulator } from 'firebase/auth';
 import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
@@ -14,13 +13,16 @@ const firebaseConfig: FirebaseOptions = {
   measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID, // Optional
 };
 
+// These are the environment variables critical for Firebase to initialize.
+// Add or remove variables here as per your project's needs.
 const criticalEnvVars = [
   'NEXT_PUBLIC_FIREBASE_API_KEY',
   'NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN',
   'NEXT_PUBLIC_FIREBASE_PROJECT_ID',
-  // 'NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET', // Uncomment if storage is critical
-  // 'NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID', // Uncomment if messaging is critical
-  // 'NEXT_PUBLIC_FIREBASE_APP_ID', // Uncomment if app ID is critical
+  // Uncomment if these services are critical for app startup and should be checked
+  // 'NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET',
+  // 'NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID',
+  // 'NEXT_PUBLIC_FIREBASE_APP_ID',
 ];
 
 const missingVars = criticalEnvVars.filter(key => !process.env[key]);
@@ -32,13 +34,15 @@ let db;
 
 if (missingVars.length > 0) {
   console.error(
-    `Firebase initialization failed: Missing critical environment variables: ${missingVars.join(', ')}. ` +
-    `Please ensure these are set in your .env.local file. Refer to README.md for setup instructions. ` +
-    `Firebase services will not be available.`
+    `Firebase initialization failed: Missing critical environment variables: ${missingVars.join(', ')}. \n` +
+    `Please ensure these variables are correctly set in your .env.local file, which must be located in the root directory of your project (same level as package.json).\n` +
+    `VERY IMPORTANT: You MUST restart your Next.js development server (e.g., stop the 'npm run dev' command and run it again) after creating or modifying the .env.local file for the changes to take effect.\n` +
+    `Double-check the variable names and their values. Refer to the README.md file for detailed setup instructions.\n` +
+    `Firebase services will not be available until this is resolved.`
   );
-  // Set app, auth, db to null or handle appropriately to prevent app crash
-  // For now, they will be undefined, and subsequent calls will fail,
-  // which is acceptable as the console error clearly indicates the setup issue.
+  // To prevent the app from crashing due to undefined Firebase services,
+  // services will be undefined, and calls to them will likely fail,
+  // which should be caught by subsequent error handling or result in clear runtime errors.
 } else {
   if (!getApps().length) {
     app = initializeApp(firebaseConfig);
@@ -50,24 +54,64 @@ if (missingVars.length > 0) {
   db = getFirestore(app);
   // storage = getStorage(app); // If using Firebase Storage
 
-  // Connect to emulators if running in development and emulators are running
+  // Connect to emulators if running in development and emulators are configured AND running
+  // Ensure you have set these NEXT_PUBLIC_ environment variables if you intend to use emulators.
   if (process.env.NODE_ENV === 'development') {
-    // Check if emulators are running (optional, simple check)
-    // Note: For a more robust check, you might ping the emulator ports
-    const emulatorsRunning = process.env.FIREBASE_AUTH_EMULATOR_HOST || process.env.FIRESTORE_EMULATOR_HOST;
+    const authEmulatorHost = process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST; // e.g., localhost:9099 or 127.0.0.1:9099
+    const firestoreEmulatorHost = process.env.NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST; // e.g., localhost or 127.0.0.1
+    const firestoreEmulatorPort = process.env.NEXT_PUBLIC_FIRESTORE_EMULATOR_PORT; // e.g., 8080
+    // const storageEmulatorHost = process.env.NEXT_PUBLIC_STORAGE_EMULATOR_HOST; // e.g., localhost
+    // const storageEmulatorPort = process.env.NEXT_PUBLIC_STORAGE_EMULATOR_PORT; // e.g., 9199
 
-    if (emulatorsRunning) {
-        console.log("Connecting to Firebase Emulators");
+    let emulatorsConfigured = false;
+
+    if (authEmulatorHost) {
       try {
-        // Default emulator ports
-        connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true });
-        connectFirestoreEmulator(db, 'localhost', 8080);
-        // connectStorageEmulator(storage, 'localhost', 9199); // If using Storage Emulator
-      } catch (error) {
-        console.warn("Failed to connect to Firebase emulators. Ensure they are running or disable emulator connection in firebase.ts.", error);
+        // Ensure the URL starts with http:// or https://. Default to http if no scheme.
+        const authUrl = authEmulatorHost.startsWith('http') ? authEmulatorHost : `http://${authEmulatorHost}`;
+        connectAuthEmulator(auth, authUrl, { disableWarnings: true });
+        console.log(`Attempting to connect to Auth Emulator at ${authUrl}`);
+        emulatorsConfigured = true;
+      } catch (e: any) {
+        console.warn(`Failed to connect to Firebase Auth emulator using NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST (${authEmulatorHost}). Error: ${e.message}. Ensure it is running or configuration is correct.`);
       }
+    }
+
+    if (firestoreEmulatorHost && firestoreEmulatorPort) {
+       try {
+        const port = parseInt(firestoreEmulatorPort, 10);
+        if (isNaN(port)) {
+            console.warn(`Invalid Firestore emulator port: ${firestoreEmulatorPort}. Must be a number.`);
+        } else {
+            connectFirestoreEmulator(db, firestoreEmulatorHost, port);
+            console.log(`Attempting to connect to Firestore Emulator at ${firestoreEmulatorHost}:${port}`);
+            emulatorsConfigured = true;
+        }
+      } catch (e: any) {
+        console.warn(`Failed to connect to Firebase Firestore emulator using NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST/PORT (${firestoreEmulatorHost}:${firestoreEmulatorPort}). Error: ${e.message}. Ensure it is running or configuration is correct.`);
+      }
+    }
+    
+    // Example for Storage Emulator (if used)
+    // if (storageEmulatorHost && storageEmulatorPort) {
+    //   try {
+    //     const port = parseInt(storageEmulatorPort, 10);
+    //     if (isNaN(port)) {
+    //         console.warn(`Invalid Storage emulator port: ${storageEmulatorPort}. Must be a number.`);
+    //     } else {
+    //         connectStorageEmulator(storage, storageEmulatorHost, port);
+    //         console.log(`Attempting to connect to Storage Emulator at ${storageEmulatorHost}:${port}`);
+    //         emulatorsConfigured = true;
+    //     }
+    //   } catch (e: any) {
+    //     console.warn(`Failed to connect to Firebase Storage emulator using NEXT_PUBLIC_STORAGE_EMULATOR_HOST/PORT. Error: ${e.message}. Ensure it is running or configuration is correct.`);
+    //   }
+    // }
+
+    if (emulatorsConfigured) {
+        console.log("Firebase emulators configured based on NEXT_PUBLIC_ environment variables. If connection fails, ensure emulators are actually running at the specified hosts/ports.");
     } else {
-        console.log("Firebase Emulators not detected or not configured. Connecting to live Firebase services.");
+        console.log("Firebase Emulators not configured via NEXT_PUBLIC_ environment variables or variables are missing. Connecting to live Firebase services (if configured).");
     }
   }
 }
