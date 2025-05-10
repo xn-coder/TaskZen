@@ -16,6 +16,7 @@ import {
   serverTimestamp,
   onSnapshot,
   QueryDocumentSnapshot,
+  DocumentSnapshot, // Import DocumentSnapshot
 } from 'firebase/firestore';
 import { formatISO, parseISO, isBefore } from 'date-fns';
 
@@ -34,8 +35,14 @@ const processTimestampsInDoc = (docData: any) => {
   return data;
 };
 
-const processTask = async (taskDocSnap: QueryDocumentSnapshot, profilesMap: Map<string, Profile>): Promise<Task> => {
-  const taskData = processTimestampsInDoc({ id: taskDocSnap.id, ...taskDocSnap.data() });
+// processTask can accept DocumentSnapshot as QueryDocumentSnapshot is a DocumentSnapshot
+// and it only uses .id and .data() which are available after an exists() check.
+const processTask = async (taskDocSnap: DocumentSnapshot, profilesMap: Map<string, Profile>): Promise<Task> => {
+  if (!taskDocSnap.exists()) {
+    // This path should ideally not be hit if callers check .exists() first
+    throw new Error(`Task document with ID ${taskDocSnap.id} does not exist.`);
+  }
+  const taskData = processTimestampsInDoc({ id: taskDocSnap.id, ...taskDocSnap.data()! }); // Added '!' as exists is true
   
   const now = new Date();
   const dueDate = taskData.due_date ? parseISO(taskData.due_date) : new Date(0); 
@@ -50,14 +57,14 @@ const processTask = async (taskDocSnap: QueryDocumentSnapshot, profilesMap: Map<
       }
     }
   }
-  const createdBy = taskData.created_by_id ? profilesMap.get(taskData.created_by_id) : undefined;
+  const createdByProfile = taskData.created_by_id ? profilesMap.get(taskData.created_by_id) : undefined;
 
   return {
     ...taskData,
     status: isOverdue ? 'Overdue' : taskData.status,
     assignee_ids: taskData.assignee_ids || [],
-    assignees: assignees.length > 0 ? assignees : null,
-    created_by: createdBy,
+    assignees: assignees.length > 0 ? assignees : null, // Keep as null if no assignees resolved
+    created_by: createdByProfile, // Keep as undefined if no creator profile resolved
   } as Task;
 };
 
@@ -107,9 +114,7 @@ export const getTasks = async (userId?: string): Promise<Task[]> => {
 };
 
 export const getDashboardTasks = async (userId: string): Promise<{ assignedTasks: Task[], createdTasks: Task[], overdueTasks: Task[] }> => {
-  // This function might be deprecated if dashboard uses realtime tasks directly from context.
-  // For now, it can serve as a one-time fetch if needed.
-  const allUserTasks = await getTasks(userId); // Gets all tasks related to the user
+  const allUserTasks = await getTasks(userId); 
 
   const assignedTasks = allUserTasks.filter(
     task => task.assignee_ids.includes(userId) && task.status !== 'Done' && task.status !== 'Overdue'
@@ -140,19 +145,17 @@ export const addTask = async (taskData: Omit<Task, 'id' | 'created_at' | 'update
   try {
     const docRef = await addDoc(tasksCollection, payload);
     const newDocSnap = await getDoc(docRef);
-    if (!newDocSnap.exists() || !(newDocSnap instanceof QueryDocumentSnapshot)) {
-        // getDoc returns DocumentSnapshot, not QueryDocumentSnapshot directly.
-        // We need to ensure it's the right type for processTask or adjust processTask.
-        // For simplicity, let's assume if it exists, we can create a mock QueryDocumentSnapshot or fetch again.
-        // Or, better, processTask should accept DocumentSnapshot. Let's adjust processTask for this.
-        // For now, if newDocSnap exists, let's assume it's usable or refetch.
-        // This scenario is unlikely if addDoc succeeds.
-        throw new Error("Failed to create task or retrieve it after creation.");
+
+    if (!newDocSnap.exists()) {
+      // This case should be rare if addDoc was successful, but good to handle.
+      console.error(`Failed to retrieve document (ID: ${docRef.id}) immediately after creation.`);
+      throw new Error("Failed to create task: Could not retrieve task data post-creation.");
     }
+    
     const profilesMap = await getAllProfilesMap();
-    // Casting newDocSnap to QueryDocumentSnapshot might be risky if its structure is different.
-    // It's safer if processTask can handle a generic DocumentSnapshot.
-    // Let's assume processTask can handle a DocumentSnapshot for now.
+    // newDocSnap is a DocumentSnapshot here. processTask can handle it if .exists() is true.
+    // The cast 'as QueryDocumentSnapshot' is for properties like .exists being typed as true,
+    // which is fine after checking newDocSnap.exists().
     return processTask(newDocSnap as QueryDocumentSnapshot, profilesMap); 
   } catch (error) {
     console.error("Error adding task to Firestore:", error);
@@ -164,7 +167,7 @@ export const updateTask = async (taskId: string, taskData: Partial<Omit<Task, 'i
   const taskDocRef = doc(db, 'tasks', taskId);
   
   const updatePayload: any = { ...taskData, updated_at: serverTimestamp() };
-  if (taskData.due_date && typeof taskData.due_date === 'string') { // ensure it's a string before parsing
+  if (taskData.due_date && typeof taskData.due_date === 'string') { 
     updatePayload.due_date = Timestamp.fromDate(parseISO(taskData.due_date));
   }
   if (taskData.hasOwnProperty('description') && taskData.description === undefined) {
@@ -181,7 +184,7 @@ export const updateTask = async (taskId: string, taskData: Partial<Omit<Task, 'i
         throw new Error("Failed to update task or retrieve it after update.");
     }
     const profilesMap = await getAllProfilesMap();
-    return processTask(updatedDocSnap as QueryDocumentSnapshot, profilesMap); // Similar casting concern as addTask
+    return processTask(updatedDocSnap as QueryDocumentSnapshot, profilesMap);
   } catch (error) {
     console.error(`Error updating task ${taskId} in Firestore:`, error);
     throw error;
@@ -217,44 +220,50 @@ export const onTasksUpdate = (
   let createdListenerInitialized = false;
   let assignedListenerInitialized = false;
   let profilesMapCache: Map<string, Profile> | null = null;
+  let processingTimeout: NodeJS.Timeout | null = null;
 
 
   const processAndRelay = async () => {
-    // Avoid processing if one listener hasn't fired its first snapshot yet
-    if (!createdListenerInitialized || !assignedListenerInitialized) {
-        // Still loading as not all initial data is in
-        if(callback) callback({ tasks: [], isLoading: true });
-        return;
-    }
-    
-    // Cache profilesMap for a short duration or until a change is detected (advanced)
-    // For simplicity, fetch every time for now or use a recently fetched one.
-    if (!profilesMapCache) {
-        profilesMapCache = await getAllProfilesMap();
-    }
+    if (processingTimeout) clearTimeout(processingTimeout);
 
-    const taskMap = new Map<string, QueryDocumentSnapshot>();
-    currentCreatedDocs.forEach(doc => taskMap.set(doc.id, doc));
-    currentAssignedDocs.forEach(doc => taskMap.set(doc.id, doc));
+    processingTimeout = setTimeout(async () => {
+        if (!createdListenerInitialized || !assignedListenerInitialized) {
+            if(callback) callback({ tasks: [], isLoading: true });
+            return;
+        }
+        
+        if (!profilesMapCache) {
+            profilesMapCache = await getAllProfilesMap();
+        }
 
-    const tasksPromises = Array.from(taskMap.values()).map(docSnap =>
-      processTask(docSnap, profilesMapCache!) // Use cached map
-    );
-    
-    try {
-        const allTasks = await Promise.all(tasksPromises);
-        if(callback) callback({ tasks: allTasks, isLoading: false });
-    } catch (error) {
-        console.error("Error processing tasks for real-time update:", error);
-        if(callback) callback({ tasks: [], isLoading: false }); // Error state, stop loading
-    }
+        const taskMap = new Map<string, QueryDocumentSnapshot>();
+        currentCreatedDocs.forEach(docSnap => taskMap.set(docSnap.id, docSnap));
+        currentAssignedDocs.forEach(docSnap => {
+          // Only add if not already present from created tasks (creator can also be assignee)
+          if (!taskMap.has(docSnap.id)) {
+            taskMap.set(docSnap.id, docSnap);
+          }
+        });
+        
+        const tasksPromises = Array.from(taskMap.values()).map(docSnap =>
+          processTask(docSnap, profilesMapCache!) 
+        );
+        
+        try {
+            const allTasks = await Promise.all(tasksPromises);
+            if(callback) callback({ tasks: allTasks, isLoading: false });
+        } catch (error) {
+            console.error("Error processing tasks for real-time update:", error);
+            if(callback) callback({ tasks: [], isLoading: false }); 
+        }
+    }, 100); // Debounce processing by 100ms
   };
   
   const qCreated = query(tasksCollection, where('created_by_id', '==', userId), orderBy('created_at', 'desc'));
   const unsubscribeCreated = onSnapshot(qCreated, (snapshot) => {
     currentCreatedDocs = snapshot.docs;
-    createdListenerInitialized = true;
-    profilesMapCache = null; // Invalidate profile cache on new data
+    if (!createdListenerInitialized) createdListenerInitialized = true;
+    profilesMapCache = null; 
     processAndRelay();
   }, (error) => {
     console.error('Error listening to created tasks:', error);
@@ -264,8 +273,8 @@ export const onTasksUpdate = (
   const qAssigned = query(tasksCollection, where('assignee_ids', 'array-contains', userId), orderBy('created_at', 'desc'));
   const unsubscribeAssigned = onSnapshot(qAssigned, (snapshot) => {
     currentAssignedDocs = snapshot.docs;
-    assignedListenerInitialized = true;
-    profilesMapCache = null; // Invalidate profile cache on new data
+    if(!assignedListenerInitialized) assignedListenerInitialized = true;
+    profilesMapCache = null; 
     processAndRelay();
   }, (error) => {
     console.error('Error listening to assigned tasks:', error);
@@ -273,6 +282,7 @@ export const onTasksUpdate = (
   });
 
   return () => {
+    if (processingTimeout) clearTimeout(processingTimeout);
     unsubscribeCreated();
     unsubscribeAssigned();
   };
